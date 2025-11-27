@@ -10,6 +10,7 @@ app = dash.Dash(
     suppress_callback_exceptions=True,
 )
 
+# Expose server for deployment (Render, etc.)
 server = app.server
 
 
@@ -46,7 +47,7 @@ def serve_layout():
                                 dcc.Link("Home", href="/", className="nav-link"),
                                 dcc.Link(
                                     "Market Evolution",
-                                    href="/animation",  # <- matches advanced_viz.py
+                                    href="/animation",  # matches advanced_viz.py
                                     className="nav-link",
                                 ),
                                 dcc.Link(
@@ -56,17 +57,22 @@ def serve_layout():
                                 ),
                                 dcc.Link(
                                     "Exploratory Analysis",
-                                    href="/eda",
+                                    href="/eda",  # matches eda.py
                                     className="nav-link",
                                 ),
                                 dcc.Link(
                                     "Risk Analysis",
-                                    href="/risk",
+                                    href="/risk",  # matches risk.py
+                                    className="nav-link",
+                                ),
+                                dcc.Link(
+                                    "Scenario Lab",
+                                    href="/scenarios",  # matches scenarios.py
                                     className="nav-link",
                                 ),
                                 dcc.Link(
                                     "3D Market Terrain",
-                                    href="/surface",
+                                    href="/surface",  # matches surface.py
                                     className="nav-link",
                                 ),
                             ],
