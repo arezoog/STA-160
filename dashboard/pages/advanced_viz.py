@@ -15,8 +15,12 @@ try:
 
     # 1. Create a Time Period column for the animation frame (YYYY-MM)
     # This groups the "frames" of the movie.
-    df['period'] = df['datetime'].dt.to_period('M').astype(str)
-    
+    df['period'] = (
+    df['datetime']
+    .dt.tz_localize(None)   # drop timezone info on purpose
+    .dt.to_period('M')
+    .astype(str)
+    )    
     # 2. Sort by date so the animation plays in order
     df = df.sort_values('period')
 
