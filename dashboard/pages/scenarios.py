@@ -1,15 +1,15 @@
 import dash
-from dash import html, dcc, Input, Output, callback
-import plotly.express as px
+from dash import html, dcc, Input, Output, callback, no_update
 import plotly.graph_objects as go
 import pandas as pd
+import numpy as np
 
 from model import load_master
 
-# Register page
 dash.register_page(__name__, path="/scenarios", name="Scenario Lab")
 
-# --- Data preparation ---
+# --- Data preparation -----------------------------------------------------
+
 try:
     df = load_master()
 
@@ -17,16 +17,9 @@ try:
     if "datetime" in df.columns:
         df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
     else:
-        # Fallback: try to infer a datetime-like column
-        datetime_cols = [
-            c
-            for c in df.columns
-            if "date" in c.lower() or "time" in c.lower()
-        ]
+        datetime_cols = [c for c in df.columns if "date" in c.lower() or "time" in c.lower()]
         if datetime_cols:
-            df["datetime"] = pd.to_datetime(
-                df[datetime_cols[0]], errors="coerce"
-            )
+            df["datetime"] = pd.to_datetime(df[datetime_cols[0]], errors="coerce")
         else:
             df["datetime"] = pd.NaT
 
@@ -41,14 +34,12 @@ try:
     else:
         PRICE_COL = None
 
-    available_years = sorted(
-        df["year"].dropna().unique().tolist()
-    )
+    available_years = sorted(df["year"].dropna().unique().tolist())
 except Exception as e:
-    print(f"Error loading data for Scenario Lab: {e}")
+    print(f"Error loading data for Scenarios: {e}")
     df = pd.DataFrame()
-    PRICE_COL = None
     available_years = []
+    PRICE_COL = None
 
 
 def _empty_fig(message="No data available"):
@@ -57,6 +48,7 @@ def _empty_fig(message="No data available"):
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=20, r=20, t=30, b=20),
         annotations=[
             dict(
                 text=message,
@@ -68,342 +60,221 @@ def _empty_fig(message="No data available"):
                 font=dict(color="#9ca3af"),
             )
         ],
-        margin=dict(l=10, r=10, t=10, b=10),
     )
     return fig
 
 
-# --- Layout ---
+# --- Layout ---------------------------------------------------------------
+
 layout = html.Div(
-    # Outer container to keep content centered and not full-bleed
-    style={
-        "maxWidth": "1200px",
-        "margin": "16px auto 32px auto",
-    },
+    style={"maxWidth": "1200px", "margin": "16px auto 32px auto", "padding": "0 16px"},
     children=[
+        
+        # --- Controls Section ---
+        html.Div(
+            className="glass-card",
+            style={"marginBottom": "24px"},
+            children=[
+                html.Div(
+                    style={"display": "flex", "flexWrap": "wrap", "gap": "24px", "alignItems": "flex-end"},
+                    children=[
+                        # Title
+                        html.Div(
+                            style={"flex": "1 1 300px"},
+                            children=[
+                                html.H2("Scenario Lab", style={"marginBottom": "8px"}),
+                                html.P(
+                                    "Simulate stress events. Select a year and define a 'Stress Threshold' price "
+                                    "to identify high-risk days. Click the top chart to inspect hourly details.",
+                                    className="text-muted",
+                                    style={"fontSize": "0.9rem", "maxWidth": "500px"}
+                                ),
+                            ]
+                        ),
+                        # Controls
+                        html.Div(
+                            children=[
+                                html.Label("Select Year", style={"color": "var(--accent-1)", "fontSize": "0.85rem"}),
+                                dcc.Dropdown(
+                                    id="scenario-year",
+                                    options=[{"label": str(y), "value": y} for y in available_years],
+                                    value=available_years[-1] if available_years else None,
+                                    clearable=False,
+                                    style={"width": "140px"}
+                                )
+                            ]
+                        ),
+                        html.Div(
+                            style={"flex": "1 1 200px"},
+                            children=[
+                                html.Label("Stress Threshold ($)", style={"color": "var(--accent-2)", "fontSize": "0.85rem"}),
+                                dcc.Slider(
+                                    id="scenario-threshold",
+                                    min=0,
+                                    max=2000,
+                                    step=50,
+                                    value=500,
+                                    marks={0: "$0", 500: "$500", 1000: "$1k", 1500: "$1.5k", 2000: "$2k"},
+                                    tooltip={"placement": "bottom", "always_visible": True},
+                                )
+                            ]
+                        ),
+                    ]
+                )
+            ]
+        ),
+
+        # --- Top Chart: Daily Overview ---
+        html.Div(
+            className="glass-card",
+            style={"marginBottom": "24px"},
+            children=[
+                html.H3("Daily Price Overview", style={"marginBottom": "10px"}),
+                # FIX: Constrain height
+                dcc.Graph(
+                    id="scenarios-daily-overview", 
+                    className="dash-graph", 
+                    style={"height": "450px"}
+                ),
+                html.P(
+                    "Click on any point above to see intraday details below.", 
+                    style={"textAlign": "center", "color": "var(--text-muted)", "fontSize": "0.8rem", "marginTop": "8px"}
+                )
+            ]
+        ),
+
+        # --- Bottom Chart: Intraday Detail ---
         html.Div(
             className="glass-card",
             children=[
-                # Header
-                html.Div(
-                    style={
-                        "display": "flex",
-                        "justifyContent": "space-between",
-                        "alignItems": "center",
-                        "marginBottom": "12px",
-                    },
-                    children=[
-                        html.Div(
-                            children=[
-                                html.H2(
-                                    "Scenario Lab – Top Stress Days"
-                                ),
-                                html.Div(
-                                    "Explore which days are most stressed under different price thresholds, "
-                                    "and drill down into the intraday pattern for any selected day.",
-                                    className="text-muted",
-                                    style={"fontSize": "0.85rem"},
-                                ),
-                            ]
-                        ),
-                    ],
+                html.H3("Intraday Stress Detail", style={"marginBottom": "10px"}),
+                # FIX: Constrain height
+                dcc.Graph(
+                    id="scenarios-detail-view", 
+                    className="dash-graph", 
+                    style={"height": "450px"}
                 ),
-
-                # Controls row
-                html.Div(
-                    style={
-                        "display": "flex",
-                        "gap": "16px",
-                        "flexWrap": "wrap",
-                        "marginBottom": "12px",
-                    },
-                    children=[
-                        html.Div(
-                            style={"minWidth": "220px"},
-                            children=[
-                                html.Label(
-                                    "Year",
-                                    style={
-                                        "fontSize": "0.8rem",
-                                        "textTransform": "uppercase",
-                                        "letterSpacing": "0.12em",
-                                    },
-                                ),
-                                dcc.Dropdown(
-                                    id="scen-year",
-                                    options=[
-                                        {
-                                            "label": str(y),
-                                            "value": int(y),
-                                        }
-                                        for y in available_years
-                                    ],
-                                    value=(
-                                        int(available_years[-1])
-                                        if available_years
-                                        else None
-                                    ),
-                                    placeholder="Select year",
-                                ),
-                            ],
-                        ),
-                        html.Div(
-                            style={"minWidth": "260px"},
-                            children=[
-                                html.Label(
-                                    "Price Threshold (percentile)",
-                                    style={
-                                        "fontSize": "0.8rem",
-                                        "textTransform": "uppercase",
-                                        "letterSpacing": "0.12em",
-                                    },
-                                ),
-                                dcc.Slider(
-                                    id="scen-quantile",
-                                    min=80,
-                                    max=99,
-                                    step=1,
-                                    value=95,
-                                    tooltip={
-                                        "placement": "bottom",
-                                        "always_visible": False,
-                                    },
-                                    marks={
-                                        p: f"{p}%"
-                                        for p in [80, 85, 90, 95, 99]
-                                    },
-                                ),
-                            ],
-                        ),
-                        html.Div(
-                            style={"minWidth": "220px"},
-                            children=[
-                                html.Label(
-                                    "Top N days",
-                                    style={
-                                        "fontSize": "0.8rem",
-                                        "textTransform": "uppercase",
-                                        "letterSpacing": "0.12em",
-                                    },
-                                ),
-                                dcc.Slider(
-                                    id="scen-topn",
-                                    min=5,
-                                    max=30,
-                                    step=1,
-                                    value=10,
-                                    tooltip={
-                                        "placement": "bottom",
-                                        "always_visible": False,
-                                    },
-                                    marks={
-                                        5: "5",
-                                        10: "10",
-                                        20: "20",
-                                        30: "30",
-                                    },
-                                ),
-                            ],
-                        ),
-                    ],
-                ),
-
-                # Graphs row
-                html.Div(
-                    style={
-                        "display": "grid",
-                        "gap": "16px",
-                        "gridTemplateColumns": "minmax(0, 1.05fr) minmax(0, 1.25fr)",
-                    },
-                    children=[
-                        html.Div(
-                            children=[
-                                html.H4(
-                                    "Top Stress Days",
-                                    style={"marginBottom": "4px"},
-                                ),
-                                html.Div(
-                                    "Bars are ordered by the fraction of hours above the selected price threshold.",
-                                    className="text-muted",
-                                    style={
-                                        "marginBottom": "6px",
-                                        "fontSize": "0.8rem",
-                                    },
-                                ),
-                                dcc.Graph(
-                                    id="scen-top-days",
-                                    className="dash-graph",
-                                    style={"height": "360px"},
-                                ),
-                            ]
-                        ),
-                        html.Div(
-                            children=[
-                                html.H4(
-                                    "Intraday Profile of Selected Day",
-                                    style={"marginBottom": "4px"},
-                                ),
-                                html.Div(
-                                    "Click a bar on the left to inspect that day's intraday price path. "
-                                    "Red markers indicate hours above the threshold.",
-                                    className="text-muted",
-                                    style={
-                                        "marginBottom": "6px",
-                                        "fontSize": "0.8rem",
-                                    },
-                                ),
-                                dcc.Graph(
-                                    id="scen-day-detail",
-                                    className="dash-graph",
-                                    style={"height": "360px"},
-                                ),
-                            ]
-                        ),
-                    ],
-                ),
-            ],
-        )
-    ],
+            ]
+        ),
+    ]
 )
 
 
-# --- Callbacks ---
+# --- Callbacks ------------------------------------------------------------
+
 @callback(
-    Output("scen-top-days", "figure"),
-    Output("scen-day-detail", "figure"),
-    Input("scen-year", "value"),
-    Input("scen-quantile", "value"),
-    Input("scen-topn", "value"),
-    Input("scen-top-days", "clickData"),
+    Output("scenarios-daily-overview", "figure"),
+    Output("scenarios-detail-view", "figure"),
+    Input("scenario-year", "value"),
+    Input("scenario-threshold", "value"),
+    Input("scenarios-daily-overview", "clickData"),
 )
-def update_scenario_lab(year, quantile, topn, clickData):
-    if df.empty or PRICE_COL is None:
-        return _empty_fig("No data available"), _empty_fig(
-            "No data available"
-        )
+def update_scenario_graphs(year, threshold, click_data):
+    if df.empty or not year or PRICE_COL is None:
+        return _empty_fig(), _empty_fig()
 
-    dff = df.copy()
-    if year is not None:
-        dff = dff[dff["year"] == year]
-
-    dff = dff.dropna(subset=["datetime", PRICE_COL, "date"])
+    # 1. Filter by year
+    dff = df[df["year"] == year].copy()
     if dff.empty:
-        return _empty_fig("No data for this year"), _empty_fig(
-            "No data for this year"
-        )
+        return _empty_fig(f"No data for {year}"), _empty_fig()
 
-    # Compute threshold from chosen percentile
-    q = (quantile or 95) / 100.0
-    threshold = dff[PRICE_COL].quantile(q)
+    # 2. Identify stress events (above threshold)
+    dff["is_stress"] = dff[PRICE_COL] > threshold
 
-    dff["is_stress"] = dff[PRICE_COL] >= threshold
+    # 3. Aggregate to daily max/mean for the top chart
+    daily = dff.groupby("date").agg({
+        PRICE_COL: "max",
+        "is_stress": "any"
+    }).reset_index()
+    daily.rename(columns={PRICE_COL: "max_price"}, inplace=True)
 
-    daily = (
-        dff.groupby("date")
-        .agg(
-            max_price=(PRICE_COL, "max"),
-            avg_price=(PRICE_COL, "mean"),
-            stress_hours=("is_stress", "sum"),
-            total_hours=("is_stress", "size"),
-        )
-        .reset_index()
-    )
-    daily["stress_ratio"] = daily["stress_hours"] / daily["total_hours"]
+    # --- Top Figure: Daily Max Price ---
+    fig_top = go.Figure()
 
-    # Top N by stress_ratio (then max_price)
-    daily_sorted = daily.sort_values(
-        ["stress_ratio", "max_price"],
-        ascending=[False, False],
-    )
-    top = daily_sorted.head(int(topn) if topn else 10)
+    # Normal days
+    normal = daily[~daily["is_stress"]]
+    fig_top.add_trace(go.Scatter(
+        x=normal["date"], 
+        y=normal["max_price"],
+        mode="markers",
+        name="Normal Day",
+        marker=dict(color="#94a3b8", size=6, opacity=0.6)
+    ))
 
-    if top.empty:
-        return _empty_fig(
-            "No days exceed this threshold"
-        ), _empty_fig("No days exceed this threshold")
+    # Stress days
+    stress = daily[daily["is_stress"]]
+    fig_top.add_trace(go.Scatter(
+        x=stress["date"], 
+        y=stress["max_price"],
+        mode="markers",
+        name="Stress Event",
+        marker=dict(color="#ef4444", size=10, line=dict(width=2, color="#7f1d1d"))
+    ))
 
-    # Bar chart of top stress days
-    fig_top = px.bar(
-        top,
-        x="date",
-        y="stress_ratio",
-        hover_data={
-            "max_price": ":.2f",
-            "stress_hours": True,
-            "total_hours": True,
-            "stress_ratio": ":.2f",
-        },
-        labels={
-            "stress_ratio": "Share of hours above threshold",
-            "date": "Date",
-        },
-    )
+    # Threshold line
+    fig_top.add_hline(y=threshold, line_dash="dash", line_color="var(--accent-2)", annotation_text="Threshold")
+
     fig_top.update_layout(
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=10, r=10, t=10, b=40),
+        margin=dict(l=40, r=20, t=20, b=40),
+        xaxis_title="Date",
+        yaxis_title="Max Price ($)",
+        hovermode="x unified",
+        clickmode="event+select",
+        autosize=True
     )
-    fig_top.update_traces(marker_color="#22d3ee")
 
-    # Determine which date to drill into
-    if clickData and "points" in clickData and clickData["points"]:
-        selected_date_str = clickData["points"][0]["x"]
+    # --- Bottom Figure: Intraday Detail ---
+    # Determine which date to show (from clickData or default to max price day)
+    if click_data:
+        clicked_date = click_data["points"][0]["x"]
+        target_date = pd.to_datetime(clicked_date).date()
     else:
-        selected_date_str = str(top.iloc[0]["date"])
+        # Default to the day with the highest price
+        if not daily.empty:
+            target_date = daily.sort_values("max_price", ascending=False).iloc[0]["date"]
+        else:
+            target_date = dff["date"].iloc[0]
 
-    try:
-        selected_date = pd.to_datetime(selected_date_str).date()
-    except Exception:
-        selected_date = top.iloc[0]["date"]
-
-    day_df = dff[dff["date"] == selected_date].sort_values("datetime")
-
-    if day_df.empty:
-        return fig_top, _empty_fig(
-            "No intraday data for selected day"
-        )
-
-    # Intraday line + stress markers
-    fig_detail = go.Figure()
-
-    fig_detail.add_trace(
-        go.Scatter(
-            x=day_df["datetime"],
-            y=day_df[PRICE_COL],
-            mode="lines",
+    day_data = dff[dff["date"] == target_date].sort_values("datetime")
+    
+    if day_data.empty:
+        fig_bottom = _empty_fig("No data for selected date")
+    else:
+        fig_bottom = go.Figure()
+        
+        # Line chart for the day
+        fig_bottom.add_trace(go.Scatter(
+            x=day_data["datetime"],
+            y=day_data[PRICE_COL],
+            mode="lines+markers",
             name="Price",
-            line=dict(color="#38bdf8", width=2),
-        )
-    )
+            line=dict(color="#22d3ee", width=3),
+            marker=dict(size=6, color="#0ea5e9")
+        ))
 
-    stress_df = day_df[day_df["is_stress"]]
-    if not stress_df.empty:
-        fig_detail.add_trace(
-            go.Scatter(
-                x=stress_df["datetime"],
-                y=stress_df[PRICE_COL],
+        # Highlight points above threshold
+        above = day_data[day_data[PRICE_COL] > threshold]
+        if not above.empty:
+            fig_bottom.add_trace(go.Scatter(
+                x=above["datetime"],
+                y=above[PRICE_COL],
                 mode="markers",
-                name="Above threshold",
-                marker=dict(color="#f97316", size=8),
-            )
+                name="Above Threshold",
+                marker=dict(color="#ef4444", size=12, symbol="diamond")
+            ))
+
+        fig_bottom.update_layout(
+            template="plotly_dark",
+            title=f"Intraday Profile: {target_date}",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(15,23,42,0.5)",
+            margin=dict(l=40, r=20, t=40, b=40),
+            xaxis_title="Time of Day",
+            yaxis_title="Price ($)",
+            autosize=True
         )
 
-    # Horizontal line for threshold
-    fig_detail.add_hline(
-        y=threshold,
-        line=dict(color="#f97316", dash="dash"),
-        annotation_text=f"Threshold ≈ {threshold:.2f}",
-        annotation_position="top left",
-    )
-
-    fig_detail.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=10, r=10, t=30, b=40),
-        xaxis_title="Time",
-        yaxis_title="Price",
-    )
-
-    return fig_top, fig_detail
+    return fig_top, fig_bottom

@@ -2,115 +2,70 @@ import os
 import dash
 from dash import html, dcc
 
-# Initialize multi-page Dash app
+# Initialize the app with Multi-Page support
+# suppress_callback_exceptions=True is crucial for multi-page apps because
+# content is loaded dynamically, and callbacks might target IDs that don't exist yet.
 app = dash.Dash(
-    __name__,
-    use_pages=True,
-    title="Resource Adequacy – Predictive Dashboard",
-    suppress_callback_exceptions=True,
+    __name__, 
+    use_pages=True, 
+    suppress_callback_exceptions=True
 )
 
-# Expose server for deployment (Render, etc.)
+# Expose the server for deployment (e.g., Gunicorn)
 server = app.server
 
-
-def serve_layout():
-    return html.Div(
-        id="app",
+app.layout = html.Div([
+    
+    # --- NAVBAR START ---
+    html.Nav(
+        className="navbar",
         children=[
-            # Track URL for multipage routing
-            dcc.Location(id="url"),
-
-            # ===== TOP NAVBAR =====
-            html.Nav(
-                className="navbar",
-                children=html.Div(
-                    className="navbar-inner",
-                    children=[
-                        # Left: title + subtitle
-                        html.Div(
-                            children=[
-                                html.Div(
-                                    "Resource Adequacy – Predictive Dashboard",
-                                    className="nav-title",
-                                ),
-                                html.Div(
-                                    "Explore how different data windows and event definitions affect a probabilistic model of high-price (stress) events.",
-                                    className="text-muted",
-                                ),
-                            ]
-                        ),
-                        # Center/Right: nav links
-                        html.Div(
-                            className="nav-links",
-                            children=[
-                                dcc.Link("Home", href="/", className="nav-link"),
-                                dcc.Link(
-                                    "Market Evolution",
-                                    href="/animation",  # matches advanced_viz.py
-                                    className="nav-link",
-                                ),
-                                dcc.Link(
-                                    "Dashboard",
-                                    href="/dashboard",
-                                    className="nav-link",
-                                ),
-                                dcc.Link(
-                                    "Exploratory Analysis",
-                                    href="/eda",  # matches eda.py
-                                    className="nav-link",
-                                ),
-                                dcc.Link(
-                                    "Risk Analysis",
-                                    href="/risk",  # matches risk.py
-                                    className="nav-link",
-                                ),
-                                dcc.Link(
-                                    "Scenario Lab",
-                                    href="/scenarios",  # matches scenarios.py
-                                    className="nav-link",
-                                ),
-                                dcc.Link(
-                                    "3D Market Terrain",
-                                    href="/surface",  # matches surface.py
-                                    className="nav-link",
-                                ),
-                            ],
-                        ),
-                        # Right: pill badge
-                        html.Div(
-                            className="badge-pill",
-                            children=["EQR 2019–2025"],
-                        ),
-                    ],
-                ),
-            ),
-
-            # ===== MAIN CONTENT =====
-            html.Main(
-                className="app-container",
+            html.Div(
+                className="navbar-inner",
                 children=[
-                    dash.page_container,
-                    html.Footer(
-                        className="text-muted",
-                        children=html.Div(
-                            "Prototype dashboard for STA 160 – CAISO Resource Adequacy stress analysis.",
-                            style={
-                                "textAlign": "center",
-                                "padding": "24px 0 32px 0",
-                                "fontSize": "0.8rem",
-                            },
-                        ),
+                    # 1. LOGO / BRAND (Left Side)
+                    dcc.Link(
+                        "GRID SENTINEL",
+                        href="/",
+                        style={
+                            "fontFamily": "Orbitron, sans-serif",
+                            "fontWeight": "700",
+                            "fontSize": "1.3rem",
+                            "color": "var(--text-main)",
+                            "textDecoration": "none",
+                            "letterSpacing": "0.15em",
+                            "textShadow": "0 0 15px rgba(34, 211, 238, 0.4)"
+                        }
                     ),
-                ],
-            ),
-        ],
-    )
 
+                    # 2. NAVIGATION TABS (Right Side)
+                    # We wrap these in 'nav-links' to apply the Flexbox gap from CSS
+                    html.Div(
+                        className="nav-links",
+                        children=[
+                            dcc.Link(
+                                page['name'], 
+                                href=page["relative_path"], 
+                                className="nav-link"
+                            )
+                            for page in dash.page_registry.values()
+                        ]
+                    )
+                ]
+            )
+        ]
+    ),
+    # --- NAVBAR END ---
 
-# Use a callable layout (good practice)
-app.layout = serve_layout
+    # Main Content Area
+    dash.page_container
+])
 
 if __name__ == "__main__":
+    # Use os.environ.get to configure the port and debug mode
+    # This allows the app to run locally or in cloud environments (like Render/Heroku)
+    # without changing the code.
     port = int(os.environ.get("PORT", 8050))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    debug = os.environ.get("DEBUG", "True").lower() == "true"
+    
+    app.run(debug=debug, host="0.0.0.0", port=port)

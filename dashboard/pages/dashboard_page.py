@@ -3,97 +3,279 @@ from dash import html, dcc, Input, Output, State, callback
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+
 from model import AVAILABLE_YEARS, compute_metrics, predict_probability
 
 dash.register_page(__name__, path="/dashboard", name="Dashboard")
 
-# --- Helper: Transparent Dark Figure ---
-# This fixes the "White Box" issue on load
-def get_empty_dark_fig():
+
+def _empty_dark_fig(message=None):
+    """Small helper to avoid the white-box effect before data loads."""
     fig = go.Figure()
     fig.update_layout(
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(showgrid=False, showticklabels=False),
-        yaxis=dict(showgrid=False, showticklabels=False),
-        margin=dict(l=0, r=0, t=0, b=0)
+        margin=dict(l=20, r=20, t=30, b=20),
     )
+    if message:
+        fig.add_annotation(
+            text=message,
+            x=0.5,
+            y=0.5,
+            xref="paper",
+            yref="paper",
+            showarrow=False,
+            font=dict(color="#9ca3af"),
+        )
     return fig
 
-# --- Styles ---
-tab_style = {'borderBottom': '1px solid #374151', 'padding': '12px', 'backgroundColor': 'rgba(0,0,0,0)', 'color': '#94a3b8'}
-tab_selected_style = {'borderBottom': '2px solid #00f2ff', 'backgroundColor': 'rgba(0, 242, 255, 0.1)', 'color': '#00f2ff', 'fontWeight': 'bold', 'padding': '12px'}
+
+# --- Layout ---------------------------------------------------------------
+
+sorted_years = sorted(AVAILABLE_YEARS) if AVAILABLE_YEARS else []
+default_years = sorted_years[-3:] if len(sorted_years) >= 3 else sorted_years
 
 layout = html.Div(
-    style={"paddingTop": "8px"},
+    style={"maxWidth": "1200px", "margin": "16px auto 32px auto", "padding": "0 16px"},
     children=[
         dcc.Store(id="metrics-store"),
         html.Div(
-            style={"display": "flex", "gap": "16px", "flexWrap": "wrap"},
+            style={
+                "display": "flex",
+                "flexWrap": "wrap",
+                "gap": "16px",
+                "alignItems": "stretch",
+            },
             children=[
-                # LEFT CARD
+                # LEFT: configuration + metrics
                 html.Div(
-                    className="glass-card", # <--- Applies the CSS blur
-                    style={"flex": "1 1 280px", "padding": "20px", "borderRadius": "16px", "display": "flex", "flexDirection": "column", "gap": "20px"},
+                    className="glass-card",
+                    style={
+                        "flex": "1 1 260px",
+                        "display": "flex",
+                        "flexDirection": "column",
+                        "gap": "12px",
+                    },
                     children=[
-                        html.Div([
-                            html.H4("Configuration", style={"margin": "0 0 10px 0", "fontSize": "1rem"}),
-                            html.Label("Training Years:", style={"fontSize": "0.85rem", "color": "#9ca3af"}),
-                            dcc.Dropdown(
-                                id="year-dropdown",
-                                options=[{"label": str(y), "value": y} for y in AVAILABLE_YEARS],
-                                value=[2022, 2023, 2024, 2025],
-                                multi=True,
-                                style={"color": "#000"} 
-                            ),
-                        ]),
-                        html.Div([
-                            html.Label("Test Size:", style={"fontSize": "0.85rem", "color": "#9ca3af"}),
-                            dcc.Slider(id="test-size-slider", min=0.1, max=0.5, step=0.05, value=0.2, marks={0.1: "10%", 0.5: "50%"}, tooltip={"placement": "bottom"}),
-                        ]),
-                        html.Div([
-                            html.Label("Event Threshold:", style={"fontSize": "0.85rem", "color": "#9ca3af"}),
-                            dcc.Slider(id="event-p-slider", min=0.80, max=0.99, step=0.01, value=0.95, marks={0.80: "80%", 0.99: "99%"}, tooltip={"placement": "bottom"}),
-                        ]),
-                        html.Button(
-                            "⚡ Train / Refresh Model", id="train-btn", n_clicks=0, className="glass-card",
-                            style={"marginTop": "auto", "color": "#00f2ff", "fontWeight": "bold", "padding": "12px", "cursor": "pointer", "border": "1px solid rgba(0, 242, 255, 0.3)", "background": "rgba(0, 242, 255, 0.1)"}
+                        html.H2("Model Dashboard", style={"margin": "0 0 4px 0", "fontSize": "1.1rem"}),
+                        html.P(
+                            "Select training years and thresholds, then fit a simple stress-event model.",
+                            className="text-muted",
+                            style={"fontSize": "0.85rem", "marginBottom": "4px"},
                         ),
-                        html.Div(id="model-metrics", style={"fontSize": "0.85rem", "color": "#d1d5db", "lineHeight": "1.6"})
-                    ],
-                ),
-                # MIDDLE CARD
-                html.Div(
-                    className="glass-card",
-                    style={"flex": "2 1 500px", "padding": "20px", "borderRadius": "16px"},
-                    children=[
-                        html.H4("Model Performance", style={"margin": "0 0 15px 0"}),
-                        dcc.Tabs(
-                            id="viz-tabs", value="ts-tab", parent_className="custom-tabs", content_style={"padding": "10px", "border": "none"},
+                        html.Div(
                             children=[
-                                dcc.Tab(label="Predictions vs. Actual", value="ts-tab", style=tab_style, selected_style=tab_selected_style,
-                                        children=[dcc.Loading(id="loading-1", type="cube", color="#00f2ff", children=dcc.Graph(id="ts-graph", figure=get_empty_dark_fig(), style={"height": "350px"}))]),
-                                dcc.Tab(label="ROC Curve", value="roc-tab", style=tab_style, selected_style=tab_selected_style,
-                                        children=[dcc.Graph(id="roc-graph", figure=get_empty_dark_fig(), style={"height": "350px"})]),
-                                dcc.Tab(label="Prob. Histogram", value="hist-tab", style=tab_style, selected_style=tab_selected_style,
-                                        children=[dcc.Graph(id="hist-graph", figure=get_empty_dark_fig(), style={"height": "350px"})]),
+                                html.Label(
+                                    "Training years",
+                                    style={
+                                        "fontSize": "0.8rem",
+                                        "textTransform": "uppercase",
+                                        "letterSpacing": "0.14em",
+                                    },
+                                ),
+                                dcc.Dropdown(
+                                    id="year-dropdown",
+                                    options=[{"label": str(y), "value": y} for y in sorted_years],
+                                    value=default_years,
+                                    multi=True,
+                                    placeholder="Select years…",
+                                ),
                             ]
-                        )
+                        ),
+                        html.Div(
+                            children=[
+                                html.Label(
+                                    "Test size",
+                                    style={
+                                        "fontSize": "0.8rem",
+                                        "textTransform": "uppercase",
+                                        "letterSpacing": "0.14em",
+                                    },
+                                ),
+                                html.Div(
+                                    children=dcc.Slider(
+                                        id="test-size-slider",
+                                        min=0.1,
+                                        max=0.5,
+                                        step=0.05,
+                                        value=0.3,
+                                        marks={0.1: "10%", 0.3: "30%", 0.5: "50%"},
+                                        tooltip={"placement": "bottom"},
+                                    ),
+                                    style={"marginTop": "4px"},
+                                ),
+                            ]
+                        ),
+                        html.Div(
+                            children=[
+                                html.Label(
+                                    "Stress event threshold (percentile)",
+                                    style={
+                                        "fontSize": "0.8rem",
+                                        "textTransform": "uppercase",
+                                        "letterSpacing": "0.14em",
+                                    },
+                                ),
+                                html.Div(
+                                    children=dcc.Slider(
+                                        id="event-p-slider",
+                                        min=80,
+                                        max=99,
+                                        step=1,
+                                        value=95,
+                                        marks={80: "80", 90: "90", 95: "95", 99: "99"},
+                                        tooltip={"placement": "bottom"},
+                                    ),
+                                    style={"marginTop": "4px"},
+                                ),
+                            ]
+                        ),
+                        html.Button(
+                            "⚡ Train / Refresh model",
+                            id="train-btn",
+                            n_clicks=0,
+                            className="primary-button",
+                            style={"marginTop": "4px"},
+                        ),
+                        html.Div(
+                            id="model-metrics",
+                            className="text-muted",
+                            style={"fontSize": "0.85rem", "marginTop": "8px", "lineHeight": "1.6"},
+                        ),
                     ],
                 ),
-                # RIGHT CARD
+                # MIDDLE: graphs
                 html.Div(
                     className="glass-card",
-                    style={"flex": "1 1 250px", "padding": "20px", "borderRadius": "16px", "display": "flex", "flexDirection": "column", "gap": "15px"},
+                    style={
+                        "flex": "2 1 480px",
+                        "display": "flex",
+                        "flexDirection": "column",
+                        "gap": "12px",
+                    },
                     children=[
-                        html.H4("Live Prediction", style={"margin": "0", "fontSize": "1rem"}),
-                        # These inputs are styled to be DARK now:
-                        html.Div([html.Label("Quantity (MW)", style={"fontSize": "0.8rem"}), dcc.Input(id="in-qty", type="number", value=100, style={"width": "100%", "padding": "8px", "borderRadius": "4px", "border": "1px solid #374151", "backgroundColor": "rgba(255,255,255,0.05)", "color": "#e5e7eb"})]),
-                        html.Div([html.Label("Total Charge ($)", style={"fontSize": "0.8rem"}), dcc.Input(id="in-charge", type="number", value=5000, style={"width": "100%", "padding": "8px", "borderRadius": "4px", "border": "1px solid #374151", "backgroundColor": "rgba(255,255,255,0.05)", "color": "#e5e7eb"})]),
-                        html.Div([html.Label("Month (1-12)", style={"fontSize": "0.8rem"}), dcc.Input(id="in-month", type="number", value=7, min=1, max=12, style={"width": "100%", "padding": "8px", "borderRadius": "4px", "border": "1px solid #374151", "backgroundColor": "rgba(255,255,255,0.05)", "color": "#e5e7eb"})]),
-                        html.Button("Compute Probability", id="predict-btn", n_clicks=0, style={"backgroundColor": "#2563eb", "color": "white", "border": "1px solid #3b82f6", "padding": "10px", "borderRadius": "8px", "fontWeight": "bold", "cursor": "pointer", "marginTop": "10px", "boxShadow": "0 0 10px rgba(59, 130, 246, 0.4)"}),
-                        html.Div(id="predict-out", className="neon-border", style={"marginTop": "10px", "padding": "15px", "borderRadius": "8px", "textAlign": "center", "backgroundColor": "rgba(0,0,0,0.3)", "minHeight": "60px", "display": "flex", "alignItems": "center", "justifyContent": "center", "fontWeight": "bold", "color": "#00f2ff", "border": "1px solid rgba(0,242,255,0.2)"}, children="Ready...")
+                        html.H3("Model performance", style={"margin": "0 0 4px 0", "fontSize": "1.0rem"}),
+                        dcc.Tabs(
+                            id="viz-tabs",
+                            value="ts-tab",
+                            parent_className="custom-tabs",
+                            children=[
+                                dcc.Tab(
+                                    label="Predictions vs actual",
+                                    value="ts-tab",
+                                    children=[
+                                        dcc.Graph(
+                                            id="ts-graph",
+                                            className="dash-graph",
+                                            figure=_empty_dark_fig("Train the model to see time-series output."),
+                                        )
+                                    ],
+                                ),
+                                dcc.Tab(
+                                    label="ROC curve",
+                                    value="roc-tab",
+                                    children=[
+                                        dcc.Graph(
+                                            id="roc-graph",
+                                            className="dash-graph",
+                                            figure=_empty_dark_fig("Train the model to see the ROC curve."),
+                                        )
+                                    ],
+                                ),
+                                dcc.Tab(
+                                    label="Probability distribution",
+                                    value="hist-tab",
+                                    children=[
+                                        dcc.Graph(
+                                            id="hist-graph",
+                                            className="dash-graph",
+                                            figure=_empty_dark_fig("Train the model to see probabilities."),
+                                        )
+                                    ],
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+                # RIGHT: live prediction
+                html.Div(
+                    className="glass-card",
+                    style={
+                        "flex": "1 1 260px",
+                        "display": "flex",
+                        "flexDirection": "column",
+                        "gap": "10px",
+                    },
+                    children=[
+                        html.H3("Live prediction", style={"margin": "0", "fontSize": "1.0rem"}),
+                        html.P(
+                            "Use the trained model to estimate stress probability for a single transaction.",
+                            className="text-muted",
+                            style={"fontSize": "0.8rem"},
+                        ),
+                        html.Label(
+                            "Quantity (MW)",
+                            style={
+                                "fontSize": "0.8rem",
+                                "textTransform": "uppercase",
+                                "letterSpacing": "0.14em",
+                            },
+                        ),
+                        dcc.Input(
+                            id="in-qty",
+                            type="number",
+                            debounce=True,
+                            placeholder="e.g. 50",
+                        ),
+                        html.Label(
+                            "Total charge ($)",
+                            style={
+                                "fontSize": "0.8rem",
+                                "textTransform": "uppercase",
+                                "letterSpacing": "0.14em",
+                                "marginTop": "4px",
+                            },
+                        ),
+                        dcc.Input(
+                            id="in-charge",
+                            type="number",
+                            debounce=True,
+                            placeholder="e.g. 120000",
+                        ),
+                        html.Label(
+                            "Delivery month (1–12)",
+                            style={
+                                "fontSize": "0.8rem",
+                                "textTransform": "uppercase",
+                                "letterSpacing": "0.14em",
+                                "marginTop": "4px",
+                            },
+                        ),
+                        dcc.Input(
+                            id="in-month",
+                            type="number",
+                            min=1,
+                            max=12,
+                            step=1,
+                            debounce=True,
+                            placeholder="1–12",
+                        ),
+                        html.Button(
+                            "Compute probability",
+                            id="predict-btn",
+                            n_clicks=0,
+                            className="primary-button",
+                            style={"marginTop": "6px"},
+                        ),
+                        html.Div(
+                            id="predict-out",
+                            style={
+                                "marginTop": "10px",
+                                "fontSize": "0.9rem",
+                            },
+                            children="Ready… train the model and enter inputs to see a probability.",
+                        ),
                     ],
                 ),
             ],
@@ -101,41 +283,202 @@ layout = html.Div(
     ],
 )
 
+# --- Callbacks ------------------------------------------------------------
+
+
 @callback(
-    [Output("metrics-store", "data"), Output("model-metrics", "children"), Output("ts-graph", "figure"), Output("roc-graph", "figure"), Output("hist-graph", "figure")],
+    Output("metrics-store", "data"),
+    Output("model-metrics", "children"),
+    Output("ts-graph", "figure"),
+    Output("roc-graph", "figure"),
+    Output("hist-graph", "figure"),
     Input("train-btn", "n_clicks"),
-    [State("year-dropdown", "value"), State("test-size-slider", "value"), State("event-p-slider", "value")]
+    State("year-dropdown", "value"),
+    State("test-size-slider", "value"),
+    State("event-p-slider", "value"),
 )
 def update_model(n_clicks, years, test_size, event_p):
-    if not years: years = [2023, 2024]
-    results = compute_metrics(years=years, event_percentile=event_p, test_size=test_size, random_state=42)
-    acc, auc, brier = results["accuracy"], results["auc"], results["brier"]
-    metrics_text = [html.Div(f"Accuracy: {acc:.1%}", style={"color": "#00ff9d"}), html.Div(f"ROC AUC: {auc:.3f}", style={"color": "#00f2ff"}), html.Div(f"Brier Score: {brier:.3f}", style={"color": "#fbbf24"})]
-    
-    # NEON GRAPH STYLING
-    ts_data = results["ts"]
-    df_ts = pd.DataFrame({"date": pd.to_datetime(ts_data["datetime"]), "prob_pred": ts_data["p_hat"], "actual_event": ts_data["actual"]})
-    fig_ts = go.Figure()
-    events_only = df_ts[df_ts["actual_event"] == 1]
-    fig_ts.add_trace(go.Scatter(x=events_only["date"], y=events_only["prob_pred"], mode="markers", name="Stress Event", marker=dict(color="#ff0055", size=8, symbol="x", line=dict(width=2, color="#ff0055"))))
-    fig_ts.add_trace(go.Scatter(x=df_ts["date"], y=df_ts["prob_pred"], mode="lines", name="Predicted Prob", line=dict(color="#00f2ff", width=2, shape='spline'), fill='tozeroy', fillcolor='rgba(0, 242, 255, 0.05)'))
-    fig_ts.update_layout(template="plotly_dark", title=None, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", margin=dict(l=40, r=20, t=10, b=40), legend=dict(orientation="h", y=1.1, font=dict(family="Rajdhani", size=14)), xaxis=dict(showgrid=False, title="Date"), yaxis=dict(gridcolor="rgba(255,255,255,0.1)", title="Probability"), hovermode="x unified")
-    
-    roc = results["roc_points"]
-    fig_roc = go.Figure()
-    fig_roc.add_trace(go.Scatter(x=roc["fpr"], y=roc["tpr"], mode="lines", name="ROC", line=dict(color="#00ff9d", width=3)))
-    fig_roc.add_shape(type="line", x0=0, y0=0, x1=1, y1=1, line=dict(dash="dash", color="#4b5563"))
-    fig_roc.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", margin=dict(l=40, r=20, t=10, b=40), xaxis_title="False Positive Rate", yaxis_title="True Positive Rate")
+    if not sorted_years:
+        msg = "No years available from model.AVAILABLE_YEARS."
+        empty = _empty_dark_fig(msg)
+        return None, [html.Div(msg)], empty, empty, empty
 
-    fig_hist = px.histogram(df_ts, x="prob_pred", nbins=30, color_discrete_sequence=["#00f2ff"])
-    fig_hist.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", margin=dict(l=40, r=20, t=10, b=40), xaxis_title="Predicted Probability", yaxis_title="Count", showlegend=False)
+    if not years:
+        years = default_years or sorted_years
 
-    return {"years": years, "test_size": float(test_size), "event_p": float(event_p)}, metrics_text, fig_ts, fig_roc, fig_hist
+    # event_p slider is in 80–99; convert to percentile in [0,1]
+    if event_p is None:
+        event_p = 95
+    event_percentile = float(event_p) / 100.0
 
-@callback(Output("predict-out", "children"), Input("predict-btn", "n_clicks"), State("metrics-store", "data"), State("in-qty", "value"), State("in-charge", "value"), State("in-month", "value"), prevent_initial_call=True)
-def do_predict(n, store, qty, charge, month):
-    if not store: return "⚠️ Train model first"
-    prob = predict_probability(store["years"], {"qty": float(qty), "charge": float(charge), "month": float(month)}, store["event_p"], store["test_size"], 42)
-    percentage = prob * 100
+    if test_size is None:
+        test_size = 0.3
+
+    # Compute metrics using shared model helper.
+    results = compute_metrics(
+        years=years,
+        event_percentile=event_percentile,
+        test_size=test_size,
+        random_state=42,
+    )
+
+    acc = results.get("accuracy")
+    auc = results.get("auc")
+    brier = results.get("brier")
+
+    metrics_text = []
+    if acc is not None:
+        metrics_text.append(html.Div(f"Accuracy: {acc:.1%}", style={"color": "#00ff9d"}))
+    if auc is not None:
+        metrics_text.append(html.Div(f"ROC AUC: {auc:.3f}", style={"color": "#38bdf8"}))
+    if brier is not None:
+        metrics_text.append(html.Div(f"Brier score: {brier:.3f}", style={"color": "#fbbf24"}))
+
+    # Time-series: probability & events
+    ts_data = results.get("ts", {})
+    df_ts = pd.DataFrame(
+        {
+            "date": pd.to_datetime(ts_data.get("datetime", [])),
+            "prob_pred": ts_data.get("p_hat", []),
+            "actual_event": ts_data.get("actual", []),
+        }
+    )
+
+    fig_ts = _empty_dark_fig()
+    if not df_ts.empty:
+        fig_ts = go.Figure()
+
+        events_only = df_ts[df_ts["actual_event"] == 1]
+        if not events_only.empty:
+            fig_ts.add_trace(
+                go.Scatter(
+                    x=events_only["date"],
+                    y=events_only["prob_pred"],
+                    mode="markers",
+                    name="Stress event",
+                    marker=dict(color="#ff0055", size=8, symbol="x", line=dict(width=2, color="#ff0055")),
+                )
+            )
+
+        fig_ts.add_trace(
+            go.Scatter(
+                x=df_ts["date"],
+                y=df_ts["prob_pred"],
+                mode="lines",
+                name="Predicted probability",
+                line=dict(color="#00f2ff", width=2, shape="spline"),
+                fill="tozeroy",
+                fillcolor="rgba(0, 242, 255, 0.05)",
+            )
+        )
+        fig_ts.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(15,23,42,0.6)",
+            margin=dict(l=40, r=20, t=20, b=40),
+            xaxis_title="Date",
+            yaxis_title="Stress probability",
+            hovermode="x unified",
+        )
+
+    # ROC curve
+    roc_data = results.get("roc_points", {})
+    fpr = roc_data.get("fpr", [])
+    tpr = roc_data.get("tpr", [])
+
+    fig_roc = _empty_dark_fig()
+    if len(fpr) and len(tpr):
+        fig_roc = go.Figure()
+        fig_roc.add_trace(
+            go.Scatter(
+                x=fpr,
+                y=tpr,
+                mode="lines",
+                name="ROC",
+                line=dict(color="#22d3ee", width=3),
+            )
+        )
+        fig_roc.add_shape(
+            type="line",
+            x0=0,
+            y0=0,
+            x1=1,
+            y1=1,
+            line=dict(dash="dash", color="#4b5563"),
+        )
+        fig_roc.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(15,23,42,0.6)",
+            margin=dict(l=40, r=20, t=20, b=40),
+            xaxis_title="False positive rate",
+            yaxis_title="True positive rate",
+        )
+
+    # Histogram of predicted probabilities
+    fig_hist = _empty_dark_fig()
+    if not df_ts.empty:
+        fig_hist = px.histogram(df_ts, x="prob_pred", nbins=30)
+        fig_hist.update_traces(marker_line_width=0)
+        fig_hist.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(15,23,42,0.6)",
+            margin=dict(l=40, r=20, t=20, b=40),
+            xaxis_title="Predicted probability",
+            yaxis_title="Count",
+            showlegend=False,
+        )
+
+    store_data = {"years": years, "test_size": float(test_size), "event_p": float(event_percentile)}
+    return store_data, metrics_text, fig_ts, fig_roc, fig_hist
+
+
+@callback(
+    Output("predict-out", "children"),
+    Input("predict-btn", "n_clicks"),
+    State("metrics-store", "data"),
+    State("in-qty", "value"),
+    State("in-charge", "value"),
+    State("in-month", "value"),
+    prevent_initial_call=True,
+)
+def do_predict(n_clicks, store, qty, charge, month):
+    if not n_clicks:
+        raise dash.exceptions.PreventUpdate
+
+    if not store:
+        return "⚠️ Train the model first."
+
+    if qty is None or charge is None or month is None:
+        return "Please fill in quantity, charge, and month."
+
+    try:
+        prob = predict_probability(
+            store["years"],
+            {"qty": float(qty), "charge": float(charge), "month": float(month)},
+            store["event_p"],
+            store["test_size"],
+            42,
+        )
+    except Exception as e:
+        return f"Error computing probability: {e}"
+
+    percentage = float(prob) * 100.0
     color = "#ff0055" if percentage > 50 else "#00ff9d"
-    return html.Div([html.Span("Stress Probability: ", style={"color": "#e5e7eb"}), html.Span(f"{percentage:.1f}%", style={"color": color, "fontSize": "1.2rem", "marginLeft": "8px", "textShadow": f"0 0 10px {color}"})])
+
+    return html.Div(
+        [
+            html.Span("Estimated stress probability:", style={"fontSize": "0.85rem"}),
+            html.Span(
+                f" {percentage:.1f}%",
+                style={
+                    "fontSize": "1.1rem",
+                    "fontWeight": "600",
+                    "marginLeft": "6px",
+                    "color": color,
+                    "textShadow": f"0 0 10px {color}",
+                },
+            ),
+        ]
+    )

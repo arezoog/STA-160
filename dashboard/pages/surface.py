@@ -1,102 +1,145 @@
 import dash
 from dash import html, dcc
 import plotly.graph_objects as go
-import pandas as pd
 import numpy as np
+import pandas as pd
+
 from model import load_master
 
-dash.register_page(__name__, path="/surface", name="3D Market Terrain")
+dash.register_page(__name__, path="/surface", name="Price Surface")
 
-# --- Data Prep ---
+# --- Data preparation -----------------------------------------------------
+
 try:
     df = load_master()
-    df['year'] = df['datetime'].dt.year
-    df['month'] = df['datetime'].dt.month
-    
-    # We need a grid (Matrix) for a Surface Plot.
-    # Pivot: Index=Year, Columns=Month, Values=Price
-    price_col = 'standardized_price' if 'standardized_price' in df.columns else 'weighted_avg_price'
-    
-    # Create the matrix
-    matrix = df.pivot_table(index='year', columns='month', values=price_col, aggfunc='mean')
-    
-    # Fill gaps (interpolation makes the surface smooth instead of jagged/broken)
-    matrix_filled = matrix.interpolate(method='linear', axis=1).fillna(0)
 
-    # X and Y labels
-    years = matrix_filled.index
-    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    # Ensure datetime exists and is parsed
+    if "datetime" in df.columns:
+        df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+    else:
+        datetime_cols = [c for c in df.columns if "date" in c.lower() or "time" in c.lower()]
+        if datetime_cols:
+            df["datetime"] = pd.to_datetime(df[datetime_cols[0]], errors="coerce")
+        else:
+            df["datetime"] = pd.NaT
 
+    df = df.dropna(subset=["datetime"])
+
+    # Choose price column
+    if "standardized_price" in df.columns:
+        price_col = "standardized_price"
+    elif "charge" in df.columns:
+        price_col = "charge"
+    else:
+        price_col = None
 except Exception as e:
-    print(f"Error: {e}")
-    matrix_filled = pd.DataFrame()
-    years = []
-    months = []
+    print(f"Error preparing surface data: {e}")
+    df = pd.DataFrame()
+    price_col = None
 
-# --- Layout ---
+
+def build_surface_figure():
+    if df.empty or price_col is None:
+        return go.Figure().update_layout(
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            xaxis={"visible": False}, 
+            yaxis={"visible": False}
+        )
+
+    # 1. Create a pivot table: Index=Hour, Columns=Month, Values=Price
+    df["month"] = df["datetime"].dt.month
+    df["hour"] = df["datetime"].dt.hour
+    
+    pivot = df.pivot_table(index="hour", columns="month", values=price_col, aggfunc="mean")
+    
+    # Fill missing values to ensure smooth surface
+    pivot = pivot.interpolate(method='linear', axis=0).fillna(0)
+
+    # X = Months (1..12), Y = Hours (0..23)
+    x_vals = pivot.columns
+    y_vals = pivot.index
+    z_vals = pivot.values
+
+    # --- HOLOGRAPHIC STYLE SURFACE ---
+    fig = go.Figure(data=[go.Surface(
+        z=z_vals,
+        x=x_vals,
+        y=y_vals,
+        colorscale="Electric", # Neon / Cyberpunk scale
+        opacity=0.9,
+        contours_z=dict(
+            show=True,
+            usecolormap=True,
+            highlightcolor="limegreen",
+            project_z=True, # Casts the heatmap shadow on the floor
+        ),
+        colorbar=dict(title="Price ($)", thickness=15, x=0.9)
+    )])
+
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        title=dict(
+            text="Hourly Price Terrain (Hologram)",
+            x=0.5,
+            font=dict(family="Orbitron", size=20, color="#22d3ee")
+        ),
+        margin=dict(l=0, r=0, b=0, t=40),
+        scene=dict(
+            # Turn off background walls to make it float
+            xaxis=dict(
+                title="Month",
+                backgroundcolor="rgba(0,0,0,0)",
+                gridcolor="rgba(34, 211, 238, 0.2)", # Faint cyan grid
+                showbackground=False,
+                tickmode="linear",
+                dtick=1
+            ),
+            yaxis=dict(
+                title="Hour of Day",
+                backgroundcolor="rgba(0,0,0,0)",
+                gridcolor="rgba(34, 211, 238, 0.2)",
+                showbackground=False
+            ),
+            zaxis=dict(
+                title="Price ($)",
+                backgroundcolor="rgba(0,0,0,0)",
+                gridcolor="rgba(34, 211, 238, 0.2)",
+                showbackground=False
+            ),
+            camera=dict(eye=dict(x=1.6, y=1.6, z=1.2)) # Nice isometric view
+        ),
+    )
+
+    return fig
+
+
+# --- Layout ---------------------------------------------------------------
+
 layout = html.Div(
-    style={"paddingTop": "8px"},
+    style={"maxWidth": "1200px", "margin": "16px auto 32px auto", "padding": "0 16px"},
     children=[
         html.Div(
-            style={
-                "backgroundColor": "#020617",
-                "borderRadius": "16px",
-                "padding": "18px 20px",
-                "border": "1px solid #1f2937",
-                "boxShadow": "0 10px 30px rgba(0,0,0,0.45)",
-                "marginBottom": "16px",
-            },
+            className="glass-card",
             children=[
-                html.H3("Market Price Terrain", style={"marginTop": 0, "marginBottom": "6px", "color": "#e5e7eb"}),
+                html.H2("Market Price Topography"),
                 html.P(
-                    "Visualizing price stress as a topological landscape. Peaks represent high-stress periods.",
-                    style={"color": "#9ca3af", "fontSize": "0.9rem"}
-                )
-            ]
-        ),
-        
-        html.Div(
-            style={
-                "backgroundColor": "#020617",
-                "borderRadius": "16px",
-                "border": "1px solid #1f2937",
-                "padding": "10px",
-                "height": "80vh"
-            },
-            children=[
+                    "3D Holographic view of average prices across time of day and year. "
+                    "Rotate the model to spot structural high-price ridges.",
+                    className="text-muted",
+                    style={"fontSize": "0.9rem"},
+                ),
                 dcc.Graph(
-                    id="surface-plot",
-                    style={"height": "100%", "width": "100%"},
+                    id="price-surface",
+                    className="dash-graph",
+                    style={"height": "75vh", "borderRadius": "16px"},
                     config={"displayModeBar": False},
-                    figure=go.Figure(
-                        data=[go.Surface(
-                            z=matrix_filled.values,
-                            x=months,
-                            y=years,
-                            colorscale="Viridis", 
-                            opacity=0.9,
-                            contours_z=dict(
-                                show=True, 
-                                usecolormap=True, 
-                                highlightcolor="limegreen", 
-                                project_z=True # This projects a flat heatmap at the bottom!
-                            )
-                        )],
-                        layout=go.Layout(
-                            template="plotly_dark",
-                            title=None,
-                            scene=dict(
-                                xaxis=dict(title="Month", gridcolor="#374151", backgroundcolor="rgba(0,0,0,0)"),
-                                yaxis=dict(title="Year", gridcolor="#374151", backgroundcolor="rgba(0,0,0,0)"),
-                                zaxis=dict(title="Avg Price ($)", gridcolor="#374151", backgroundcolor="rgba(0,0,0,0)"),
-                                camera=dict(eye=dict(x=1.5, y=1.5, z=1.2)) # Set a nice initial camera angle
-                            ),
-                            margin=dict(l=0, r=0, b=0, t=0),
-                            paper_bgcolor="rgba(0,0,0,0)",
-                        )
-                    )
-                )
-            ]
-        )
-    ]
+                    figure=build_surface_figure(),
+                ),
+            ],
+        ),
+    ],
 )

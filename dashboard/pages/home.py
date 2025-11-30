@@ -1,144 +1,179 @@
 import dash
-from dash import html
+from dash import html, dcc
 
 dash.register_page(__name__, path="/", name="Home")
 
-
 layout = html.Div(
-    style={"paddingTop": "8px"},
+    style={"maxWidth": "1000px", "margin": "40px auto", "padding": "0 16px"},
     children=[
-        # Intro card
+        
+        # --- HERO SECTION ----------------------------------------------------
         html.Div(
-            style={
-                "backgroundColor": "#020617",
-                "borderRadius": "16px",
-                "padding": "18px 20px",
-                "boxShadow": "0 10px 30px rgba(0,0,0,0.45)",
-                "border": "1px solid #1f2937",
-                "marginBottom": "16px",
-            },
+            className="glass-card",
+            style={"marginBottom": "32px", "textAlign": "center", "padding": "40px"},
             children=[
-                html.H3(
-                    "About this dashboard",
-                    style={"marginTop": 0, "marginBottom": "6px", "fontSize": "1.1rem"},
-                ),
-                html.P(
-                    [
-                        "This interactive dashboard is part of a Resource Adequacy project using ",
-                        html.Span("FERC EQR transaction data (2019–2025)", style={"fontWeight": 600}),
-                        ". The goal is to explore when the market enters a high-price, stress-like regime ",
-                        "and how that risk changes with different modeling choices.",
-                    ],
-                    style={"color": "#d1d5db", "fontSize": "0.9rem", "marginBottom": "6px"},
-                ),
-                html.P(
-                    "Under the hood, the app fits a logistic regression model to predict whether a trade "
-                    "falls in the upper tail of standardized prices (for example, above the 95th percentile). "
-                    "The Dashboard page lets you choose which years to train on, how to define a “stress” "
-                    "event, and then visualize out-of-sample performance.",
-                    style={"color": "#9ca3af", "fontSize": "0.86rem"},
-                ),
-            ],
+                html.H1("Illuminating the Price of Power"),
+                html.H3("Uncovering hidden costs in California's opaque energy market", 
+                        style={"color": "var(--accent-1)", "opacity": "0.9"}),
+                
+                html.Div(
+                    style={"marginTop": "24px"},
+                    children=[
+                        dcc.Link(
+                            html.Button("Launch Dashboard", className="primary-button"),
+                            href="/dashboard"
+                        ),
+                    ]
+                )
+            ]
         ),
 
-        # Two-column section
+        # --- THE PROBLEM -----------------------------------------------------
         html.Div(
-            style={
-                "display": "grid",
-                "gridTemplateColumns": "minmax(0, 1.4fr) minmax(0, 1.6fr)",
-                "gap": "16px",
-                "flexWrap": "wrap",
-            },
+            className="glass-card",
+            style={"marginBottom": "32px"},
             children=[
+                html.H2("The Problem: Buying 'Grid Insurance' in the Dark"),
+                html.P(
+                    "When you flip a light switch, you expect the power to be there. "
+                    "But how does the grid guarantee reliability during a heatwave or emergency? "
+                    "The answer is a regulatory framework called Resource Adequacy (RA)."
+                ),
+                
+                # --- IMAGE 1: GRID MAP ---
                 html.Div(
                     style={
-                        "backgroundColor": "#020617",
-                        "borderRadius": "16px",
-                        "padding": "16px 18px",
-                        "boxShadow": "0 10px 30px rgba(0,0,0,0.45)",
-                        "border": "1px solid #1f2937",
-                        "fontSize": "0.86rem",
+                        "textAlign": "center",
+                        "margin": "32px 0",
+                        "padding": "20px",
+                        "background": "rgba(0,0,0,0.2)",
+                        "borderRadius": "12px",
+                        "border": "1px dashed var(--accent-muted)"
                     },
                     children=[
-                        html.Div(
-                            "What this dashboard shows",
-                            style={"fontWeight": 600, "marginBottom": "8px"},
-                        ),
-                        html.Ul(
-                            style={"paddingLeft": "18px", "color": "#d1d5db"},
-                            children=[
-                                html.Li(
-                                    "A probability model for high-price (stress) events, trained on "
-                                    "EQR transactions from selected years."
-                                ),
-                                html.Li(
-                                    "Out-of-sample predicted probabilities over time, to see when the "
-                                    "model thinks the system is more stressed."
-                                ),
-                                html.Li(
-                                    "ROC curve and summary metrics (accuracy, AUC, Brier score) to judge "
-                                    "discrimination and calibration."
-                                ),
-                                html.Li(
-                                    "A scenario explorer where you plug in quantity, total charge, and "
-                                    "month to get a predicted stress probability."
-                                ),
-                            ],
+                        html.Img(
+                            src="assets/Electricity_grid_simple-_North_America.svg.png", 
+                            style={
+                                "maxWidth": "100%", 
+                                "maxHeight": "350px", 
+                                "borderRadius": "8px",
+                                "boxShadow": "0 4px 15px rgba(0,0,0,0.5)"
+                            },
+                            alt="North American Electric Grid Map"
                         ),
                         html.P(
-                            "In your written report, you can reference this page as an overview of the data "
-                            "source, modeling goal, and how to read the dashboard.",
-                            style={"color": "#9ca3af", "marginTop": "8px"},
+                            "Figure 1: The North American Electric Grid Interconnections.",
+                            style={"fontSize": "0.85rem", "color": "var(--text-muted)", "marginTop": "12px"}
+                        )
+                    ]
+                ),
+
+                html.H4("The California Challenge", style={"color": "var(--accent-2)"}),
+                html.P(
+                    "Unlike the East Coast, where capacity is traded in transparent centralized auctions, "
+                    "California operates a Bilateral Market. Buyers and suppliers negotiate contracts privately "
+                    "behind closed doors."
+                ),
+
+                # --- IMAGE 2: MARKET STRUCTURE ---
+                html.Div(
+                    style={
+                        "textAlign": "center",
+                        "margin": "32px 0",
+                        "padding": "20px",
+                        "background": "rgba(0,0,0,0.2)",
+                        "borderRadius": "12px",
+                        "border": "1px dashed var(--accent-muted)"
+                    },
+                    children=[
+                        # NOTE: Ensure you renamed your uploaded file 'Chatgpt#27.png' to 'market_structure.png'
+                        html.Img(
+                            src="assets/market_structure.png", 
+                            style={
+                                "maxWidth": "100%", 
+                                "maxHeight": "400px", 
+                                "borderRadius": "8px",
+                                "boxShadow": "0 4px 15px rgba(0,0,0,0.5)"
+                            },
+                            alt="Bilateral Market vs Centralized Auction"
                         ),
+                        html.P(
+                            "Figure 2: Opaque Bilateral Markets vs. Transparent Centralized Auctions.",
+                            style={"fontSize": "0.85rem", "color": "var(--text-muted)", "marginTop": "12px"}
+                        )
+                    ]
+                ),
+
+                html.Ul(
+                    children=[
+                        html.Li([html.Strong("No Central Price: "), "There is no 'ticker symbol' for capacity."]),
+                        html.Li([html.Strong("High Opacity: "), "Buyers struggle to know if they are paying a fair price."]),
+                        html.Li([html.Strong("The Risk: "), "Utilities may overpay or fail to secure necessary resources."]),
                     ],
+                    style={"color": "var(--text-main)", "lineHeight": "1.8"}
+                ),
+            ]
+        ),
+
+        # --- DATA & APPROACH -------------------------------------------------
+        html.Div(
+            className="glass-card",
+            style={"marginBottom": "32px"},
+            children=[
+                html.H2("Our Approach"),
+                html.P(
+                    "To shed light on this opaque market, we analyzed over 33,000 transaction records "
+                    "from the Federal Energy Regulatory Commission (FERC)."
                 ),
 
                 html.Div(
-                    style={
-                        "backgroundColor": "#020617",
-                        "borderRadius": "16px",
-                        "padding": "16px 18px",
-                        "boxShadow": "0 10px 30px rgba(0,0,0,0.45)",
-                        "border": "1px solid #1f2937",
-                        "fontSize": "0.86rem",
-                    },
+                    style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "24px", "marginTop": "24px"},
                     children=[
-                        html.Div(
-                            "How to use the Dashboard page",
-                            style={"fontWeight": 600, "marginBottom": "8px"},
-                        ),
-                        html.Ol(
-                            style={"paddingLeft": "20px", "color": "#d1d5db", "marginBottom": "8px"},
-                            children=[
-                                html.Li("Click the Dashboard link at the top of the page."),
-                                html.Li(
-                                    "Select one or more years (e.g., 2022–2025). "
-                                    "The model trains only on those years."
-                                ),
-                                html.Li(
-                                    "Choose a test-set fraction and an event percentile (e.g., 95th). "
-                                    "Higher percentiles correspond to rarer, more extreme price spikes."
-                                ),
-                                html.Li(
-                                    "Click “Train / Refresh model” to fit the logistic regression "
-                                    "with those settings. Metrics and plots will update."
-                                ),
-                                html.Li(
-                                    "Use the scenario inputs on the right side of the Dashboard page "
-                                    "to plug in Qty, Charge, and Month and read the predicted stress "
-                                    "probability."
-                                ),
-                            ],
-                        ),
-                        html.P(
-                            "This tool is for exploratory analysis and communication, not for real-time "
-                            "operations or trading decisions.",
-                            style={"color": "#9ca3af"},
-                        ),
-                    ],
-                ),
-            ],
+                        # Left Col: The Challenge
+                        html.Div([
+                            html.H4("Dirty Data", style={"color": "#ef4444"}),
+                            html.P("Real-world energy data is notoriously noisy. We found clerical errors where prices "
+                                   "were reported in the millions, skewing the market signal.", className="text-muted")
+                        ]),
+                        # Right Col: The Solution
+                        html.Div([
+                            html.H4("Rigorous Cleaning", style={"color": "var(--accent-1)"}),
+                            html.P("We built a pipeline to standardize units and filter out the top 0.5% of extreme outliers, "
+                                   "resulting in a robust price index.", className="text-muted")
+                        ])
+                    ]
+                )
+            ]
         ),
-    ],
+
+        # --- MODELING (PLACEHOLDER) ------------------------------------------
+        html.Div(
+            className="glass-card",
+            style={"marginBottom": "32px", "borderLeft": "4px solid var(--accent-2)"},
+            children=[
+                html.Div(className="badge-pill", children="In Progress", style={"marginBottom": "12px", "display": "inline-block"}),
+                html.H2("Modeling Methodology"),
+                html.P(
+                    "We are currently developing a time-series model to forecast future capacity prices based on "
+                    "historical seasonal trends and grid stress events.",
+                    style={"fontStyle": "italic", "color": "var(--text-muted)"}
+                ),
+            ]
+        ),
+
+        # --- RESULTS (PLACEHOLDER) -------------------------------------------
+        html.Div(
+            className="glass-card",
+            style={"borderLeft": "4px solid var(--accent-1)"},
+            children=[
+                html.Div(className="badge-pill", children="Pending", style={"marginBottom": "12px", "display": "inline-block"}),
+                html.H2("Key Findings"),
+                html.P(
+                    "Early results indicate a strong correlation between heatwave events and bilateral price spikes. "
+                    "Full predictive results will be published here upon completion.",
+                    style={"fontStyle": "italic", "color": "var(--text-muted)"}
+                ),
+            ]
+        ),
+    ]
 )
-

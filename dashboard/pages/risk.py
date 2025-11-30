@@ -3,149 +3,190 @@ from dash import html, dcc, Input, Output, callback
 import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
-import numpy as np
 
-# Import shared data loader
 from model import load_master
 
 dash.register_page(__name__, path="/risk", name="Risk Analysis")
 
-# --- Data Preparation ---
+# --- Data preparation -----------------------------------------------------
+
 try:
     df = load_master()
-    
-    # Ensure datetime for grouping
-    df['year'] = df['datetime'].dt.year
-    df['month_name'] = df['datetime'].dt.month_name()
-    # Sort months correctly (not alphabetical)
-    month_order = [
-        'January', 'February', 'March', 'April', 'May', 'June', 
-        'July', 'August', 'September', 'October', 'November', 'December'
-    ]
-    df['month_cat'] = pd.Categorical(df['month_name'], categories=month_order, ordered=True)
-    
-    # Determine which price column to use
-    price_col = 'standardized_price' if 'standardized_price' in df.columns else 'weighted_avg_price'
 
+    # Ensure datetime column
+    if "datetime" in df.columns:
+        df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+    else:
+        dt_cols = [c for c in df.columns if "date" in c.lower() or "time" in c.lower()]
+        if dt_cols:
+            df["datetime"] = pd.to_datetime(df[dt_cols[0]], errors="coerce")
+        else:
+            df["datetime"] = pd.NaT
+
+    df = df.dropna(subset=["datetime"])
+    df["year"] = df["datetime"].dt.year
+    df["month_num"] = df["datetime"].dt.month
+
+    month_labels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    df["month_cat"] = pd.Categorical(
+        df["month_num"].map(lambda m: month_labels[m - 1] if 1 <= m <= 12 else None),
+        categories=month_labels,
+        ordered=True,
+    )
+
+    # Choose price column
+    if "standardized_price" in df.columns:
+        price_col = "standardized_price"
+    elif "weighted_avg_price" in df.columns:
+        price_col = "weighted_avg_price"
+    elif "charge" in df.columns:
+        price_col = "charge"
+    else:
+        price_col = None
 except Exception as e:
     print(f"Error preparing risk data: {e}")
     df = pd.DataFrame()
-    price_col = 'price'
+    price_col = None
 
-# --- Layout ---
+
+def _empty_fig(message="No data available"):
+    fig = go.Figure()
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=20, r=20, t=30, b=20),
+        annotations=[
+            dict(
+                text=message,
+                x=0.5,
+                y=0.5,
+                xref="paper",
+                yref="paper",
+                showarrow=False,
+                font=dict(color="#9ca3af"),
+            )
+        ],
+    )
+    return fig
+
+
+# --- Layout ---------------------------------------------------------------
+
 layout = html.Div(
-    style={"paddingTop": "8px"},
+    style={"maxWidth": "1200px", "margin": "16px auto 32px auto", "padding": "0 16px"},
     children=[
-        # 1. The "Stress Grid" (Calendar Heatmap)
+        # 1. Calendar-style heatmap card
         html.Div(
-            style={
-                "backgroundColor": "#020617",
-                "borderRadius": "16px",
-                "padding": "18px 20px",
-                "border": "1px solid #1f2937",
-                "boxShadow": "0 10px 30px rgba(0,0,0,0.45)",
-                "marginBottom": "24px"
-            },
-            children=[
-                html.H3("Market Stress Grid", style={"marginTop": 0, "marginBottom": "6px", "fontSize": "1.1rem"}),
-                html.P(
-                    "A thermal view of market history. Red squares indicate months with high average prices.",
-                    style={"color": "#9ca3af", "fontSize": "0.9rem"}
-                ),
-                dcc.Graph(id="risk-heatmap", style={"height": "350px"}, config={"displayModeBar": False})
-            ]
-        ),
-
-        # 2. The "Seasonal Risk" (Violin Plot)
-        html.Div(
-            style={
-                "backgroundColor": "#020617",
-                "borderRadius": "16px",
-                "padding": "18px 20px",
-                "border": "1px solid #1f2937",
-                "boxShadow": "0 10px 30px rgba(0,0,0,0.45)",
-            },
+            className="glass-card",
+            style={"marginBottom": "16px"},
             children=[
                 html.Div(
                     style={"display": "flex", "justifyContent": "space-between", "alignItems": "center"},
                     children=[
-                        html.Div([
-                            html.H3("Seasonal Risk Distribution", style={"marginTop": 0, "marginBottom": "6px", "fontSize": "1.1rem"}),
-                            html.P(
-                                "Violin plots show the shape of price probability. Wider sections = more common prices.",
-                                style={"color": "#9ca3af", "fontSize": "0.9rem", "marginBottom": "0px"}
-                            ),
-                        ]),
-                        # Interactive Toggle
+                        html.Div(
+                            children=[
+                                html.H2("Stress grid – year vs month"),
+                                html.P(
+                                    "Average price by month and year. Darker tiles indicate higher average prices.",
+                                    className="text-muted",
+                                    style={"fontSize": "0.9rem"},
+                                ),
+                            ]
+                        ),
+                    ],
+                ),
+                # FIX: Constrain height
+                dcc.Graph(id="risk-heatmap", className="dash-graph", style={"height": "450px"}),
+            ],
+        ),
+        # 2. Seasonal distribution card
+        html.Div(
+            className="glass-card",
+            children=[
+                html.Div(
+                    style={"display": "flex", "justifyContent": "space-between", "alignItems": "center"},
+                    children=[
+                        html.Div(
+                            children=[
+                                html.H3("Seasonal risk distribution", style={"marginTop": 0, "marginBottom": "4px"}),
+                                html.P(
+                                    "Violin plots show the shape of the price distribution by month. Wider sections "
+                                    "represent more common price ranges.",
+                                    className="text-muted",
+                                    style={"fontSize": "0.9rem", "marginBottom": "0px"},
+                                ),
+                            ]
+                        ),
                         dcc.Checklist(
                             id="violin-options",
-                            options=[{'label': ' Show Outlier Points', 'value': 'points'}],
+                            options=[{"label": " Show individual points", "value": "points"}],
                             value=[],
-                            style={"color": "#e5e7eb", "fontSize": "0.9rem"}
-                        )
-                    ]
+                            style={"color": "#e5e7eb", "fontSize": "0.85rem"},
+                        ),
+                    ],
                 ),
-                dcc.Graph(id="risk-violin", style={"height": "500px"})
-            ]
-        )
-    ]
+                # FIX: Constrain height
+                dcc.Graph(id="risk-violin", className="dash-graph", style={"height": "500px"}),
+            ],
+        ),
+    ],
 )
 
-# --- Callbacks ---
+
+# --- Callback -------------------------------------------------------------
+
+
 @callback(
-    [Output("risk-heatmap", "figure"),
-     Output("risk-violin", "figure")],
-    Input("violin-options", "value")
+    Output("risk-heatmap", "figure"),
+    Output("risk-violin", "figure"),
+    Input("violin-options", "value"),
 )
 def update_risk_plots(options):
-    if df.empty:
-        return go.Figure(), go.Figure()
+    if df.empty or price_col is None:
+        empty = _empty_fig()
+        return empty, empty
 
-    # --- 1. Calendar Heatmap ---
-    # Pivot data: Rows=Year, Cols=Month, Values=Mean Price
-    # We use pivot_table to aggregate
+    # --- 1. Calendar-like heatmap ----------------------------------------
     pivot_df = df.pivot_table(
-        index='year', 
-        columns='month_cat', 
-        values=price_col, 
-        aggfunc='mean'
-    )
-    
-    fig_heat = go.Figure(data=go.Heatmap(
-        z=pivot_df.values,
-        x=pivot_df.columns,
-        y=pivot_df.index,
-        colorscale='RdBu_r', # Red=High, Blue=Low (Reversed)
-        hoverongaps=False,
-        hovertemplate="<b>%{x} %{y}</b><br>Avg Price: $%{z:.2f}<extra></extra>"
-    ))
+        index="year",
+        columns="month_cat",
+        values=price_col,
+        aggfunc="mean",
+    ).sort_index(ascending=True)
 
+    fig_heat = px.imshow(
+        pivot_df,
+        aspect="auto",
+        color_continuous_scale="Turbo",
+        origin="lower",
+    )
+    fig_heat.update_traces(
+        hovertemplate="<b>%{x} %{y}</b><br>Avg price: $%{z:.2f}<extra></extra>"
+    )
     fig_heat.update_layout(
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         margin=dict(l=40, r=40, t=20, b=40),
         xaxis_title=None,
-        yaxis=dict(title=None, type='category', dtick=1), # Show every year
+        yaxis=dict(title=None, type="category", dtick=1),
+        coloraxis_colorbar=dict(title="Avg price"),
+        autosize=True,
     )
 
-    # --- 2. Violin Plot ---
-    # Check if user wants to see raw points
-    show_points = 'outliers' if 'points' in options else False
+    # --- 2. Violin plot ---------------------------------------------------
+    show_points = "outliers" if "points" in (options or []) else False
 
-    fig_violin = go.Figure()
-
-    # We add one trace per month so they get different colors
-    # (Plotly Express does this automatically, but go.Violin gives us more control)
     fig_violin = px.violin(
-        df, 
-        x="month_cat", 
-        y=price_col, 
-        color="month_cat", 
-        points=show_points, # Interactive part!
-        box=True,           # Show box plot inside violin
+        df,
+        x="month_cat",
+        y=price_col,
+        color="month_cat",
+        points=show_points,
+        box=True,
     )
-
     fig_violin.update_layout(
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
@@ -153,14 +194,13 @@ def update_risk_plots(options):
         margin=dict(l=40, r=20, t=40, b=40),
         showlegend=False,
         xaxis_title=None,
-        yaxis_title="Price Distribution ($)",
+        yaxis_title="Price distribution ($)",
+        autosize=True,
     )
-    
-    # Customize the violin style
     fig_violin.update_traces(
         meanline_visible=True,
-        line_color='white', # White outline for contrast
-        opacity=0.8
+        line_color="white",
+        opacity=0.8,
     )
 
     return fig_heat, fig_violin
