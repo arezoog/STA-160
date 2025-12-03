@@ -1,280 +1,332 @@
+# dashboard/pages/scenario.py
+
 import dash
-from dash import html, dcc, Input, Output, callback, no_update
-import plotly.graph_objects as go
+from dash import html, dcc, Input, Output, callback
 import pandas as pd
-import numpy as np
+import plotly.graph_objects as go
 
-from model import load_master
+from model import get_forecast_dashboard_data
 
-dash.register_page(__name__, path="/scenarios", name="Scenario Lab")
+dash.register_page(
+    __name__,
+    path="/scenario",
+    name="Scenario Lab",
+)
 
-# --- Data preparation -----------------------------------------------------
+# -----------------------------------------------------------
+# Load pre-trained models + data once at import
+# -----------------------------------------------------------
+result = get_forecast_dashboard_data()
+data = result["data"]
+feature_cols = result["feature_cols"]
+scaler = result["scaler"]
+svr_model = result["svr_model"]      # MultiOutputRegressor(SVR)
+rf_model = result["rf_model"]        # MultiOutputRegressor(RandomForest)
 
-try:
-    df = load_master()
+# Dropdown options for base period
+period_options = [
+    {"label": pd.to_datetime(p).strftime("%b %Y"), "value": str(p)}
+    for p in sorted(data["period"].unique())
+]
 
-    # Ensure datetime column exists and is parsed
-    if "datetime" in df.columns:
-        df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
-    else:
-        datetime_cols = [c for c in df.columns if "date" in c.lower() or "time" in c.lower()]
-        if datetime_cols:
-            df["datetime"] = pd.to_datetime(df[datetime_cols[0]], errors="coerce")
-        else:
-            df["datetime"] = pd.NaT
+default_period = period_options[-1]["value"] if period_options else None
 
-    df["date"] = df["datetime"].dt.date
-    df["year"] = df["datetime"].dt.year
+# Slider ranges / marks from empirical distribution
+qty_series = data["total_transacted_quantity"]
+qty_min = float(qty_series.quantile(0.05))
+qty_max = float(qty_series.quantile(0.95))
+qty_mid = (qty_min + qty_max) / 2
+qty_default = float(qty_series.iloc[-1])
 
-    # Choose a price column
-    if "standardized_price" in df.columns:
-        PRICE_COL = "standardized_price"
-    elif "charge" in df.columns:
-        PRICE_COL = "charge"
-    else:
-        PRICE_COL = None
+qty_marks = {
+    int(qty_min): f"{int(qty_min):,}",
+    int(qty_mid): f"{int(qty_mid):,}",
+    int(qty_max): f"{int(qty_max):,}",
+}
 
-    available_years = sorted(df["year"].dropna().unique().tolist())
-except Exception as e:
-    print(f"Error loading data for Scenarios: {e}")
-    df = pd.DataFrame()
-    available_years = []
-    PRICE_COL = None
+trades_series = data["num_trades"]
+trades_min = float(trades_series.quantile(0.05))
+trades_max = float(trades_series.quantile(0.95))
+trades_mid = (trades_min + trades_max) / 2
+trades_default = float(trades_series.iloc[-1])
 
-
-def _empty_fig(message="No data available"):
-    fig = go.Figure()
-    fig.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=20, r=20, t=30, b=20),
-        annotations=[
-            dict(
-                text=message,
-                x=0.5,
-                y=0.5,
-                xref="paper",
-                yref="paper",
-                showarrow=False,
-                font=dict(color="#9ca3af"),
-            )
-        ],
-    )
-    return fig
+trades_marks = {
+    int(trades_min): f"{int(trades_min):,}",
+    int(trades_mid): f"{int(trades_mid):,}",
+    int(trades_max): f"{int(trades_max):,}",
+}
 
 
-# --- Layout ---------------------------------------------------------------
-
+# -----------------------------------------------------------
+# Layout
+# -----------------------------------------------------------
 layout = html.Div(
-    style={"maxWidth": "1200px", "margin": "16px auto 32px auto", "padding": "0 16px"},
+    className="page-container",
     children=[
-        
-        # --- Controls Section ---
+        # Header
         html.Div(
-            className="glass-card",
-            style={"marginBottom": "24px"},
+            className="page-header",
             children=[
-                html.Div(
-                    style={"display": "flex", "flexWrap": "wrap", "gap": "24px", "alignItems": "flex-end"},
-                    children=[
-                        # Title
-                        html.Div(
-                            style={"flex": "1 1 300px"},
-                            children=[
-                                html.H2("Scenario Lab", style={"marginBottom": "8px"}),
-                                html.P(
-                                    "Simulate stress events. Select a year and define a 'Stress Threshold' price "
-                                    "to identify high-risk days. Click the top chart to inspect hourly details.",
-                                    className="text-muted",
-                                    style={"fontSize": "0.9rem", "maxWidth": "500px"}
-                                ),
-                            ]
-                        ),
-                        # Controls
-                        html.Div(
-                            children=[
-                                html.Label("Select Year", style={"color": "var(--accent-1)", "fontSize": "0.85rem"}),
-                                dcc.Dropdown(
-                                    id="scenario-year",
-                                    options=[{"label": str(y), "value": y} for y in available_years],
-                                    value=available_years[-1] if available_years else None,
-                                    clearable=False,
-                                    style={"width": "140px"}
-                                )
-                            ]
-                        ),
-                        html.Div(
-                            style={"flex": "1 1 200px"},
-                            children=[
-                                html.Label("Stress Threshold ($)", style={"color": "var(--accent-2)", "fontSize": "0.85rem"}),
-                                dcc.Slider(
-                                    id="scenario-threshold",
-                                    min=0,
-                                    max=2000,
-                                    step=50,
-                                    value=500,
-                                    marks={0: "$0", 500: "$500", 1000: "$1k", 1500: "$1.5k", 2000: "$2k"},
-                                    tooltip={"placement": "bottom", "always_visible": True},
-                                )
-                            ]
-                        ),
-                    ]
-                )
-            ]
-        ),
-
-        # --- Top Chart: Daily Overview ---
-        html.Div(
-            className="glass-card",
-            style={"marginBottom": "24px"},
-            children=[
-                html.H3("Daily Price Overview", style={"marginBottom": "10px"}),
-                # FIX: Constrain height
-                dcc.Graph(
-                    id="scenarios-daily-overview", 
-                    className="dash-graph", 
-                    style={"height": "450px"}
-                ),
+                html.H2("Scenario Lab"),
                 html.P(
-                    "Click on any point above to see intraday details below.", 
-                    style={"textAlign": "center", "color": "var(--text-muted)", "fontSize": "0.8rem", "marginTop": "8px"}
-                )
-            ]
+                    "Select a historical month as your starting point, tweak key drivers "
+                    "(quantity, trades, and price), and see how the models predict next "
+                    "months’ prices."
+                ),
+            ],
         ),
 
-        # --- Bottom Chart: Intraday Detail ---
+        # Two-column grid: left inputs, right outputs
         html.Div(
-            className="glass-card",
+            className="scenario-grid",     # style in CSS as display:flex; gap: etc.
             children=[
-                html.H3("Intraday Stress Detail", style={"marginBottom": "10px"}),
-                # FIX: Constrain height
-                dcc.Graph(
-                    id="scenarios-detail-view", 
-                    className="dash-graph", 
-                    style={"height": "450px"}
+                # LEFT: Controls column
+                html.Div(
+                    className="scenario-input-card",
+                    children=[
+                        html.H3("Scenario Inputs"),
+
+                        html.Label("Base Month"),
+                        dcc.Dropdown(
+                            id="scenario-period",
+                            options=period_options,
+                            value=default_period,
+                            clearable=False,
+                            className="dropdown-dark",
+                        ),
+
+                        html.Div(style={"height": "12px"}),
+
+                        html.Label("Total Transacted Quantity (MWh, override)"),
+                        dcc.Slider(
+                            id="scenario-qty",
+                            min=qty_min,
+                            max=qty_max,
+                            step=(qty_max - qty_min) / 50,
+                            value=qty_default,
+                            marks=qty_marks,
+                            tooltip={"placement": "bottom", "always_visible": False},
+                        ),
+                        html.Div(
+                            id="scenario-qty-label",
+                            className="slider-value-label",
+                            style={"marginTop": "4px"},
+                        ),
+
+                        html.Div(style={"height": "18px"}),
+
+                        html.Label("Number of Trades (override)"),
+                        dcc.Slider(
+                            id="scenario-trades",
+                            min=trades_min,
+                            max=trades_max,
+                            step=5,
+                            value=trades_default,
+                            marks=trades_marks,
+                            tooltip={"placement": "bottom", "always_visible": False},
+                        ),
+                        html.Div(
+                            id="scenario-trades-label",
+                            className="slider-value-label",
+                            style={"marginTop": "4px"},
+                        ),
+
+                        html.Div(style={"height": "18px"}),
+
+                        html.Label("Average Standardized Price multiplier (x)"),
+                        dcc.Slider(
+                            id="scenario-price-mult",
+                            min=0.8,
+                            max=1.2,
+                            step=0.01,
+                            value=1.0,
+                            marks={0.8: "0.8x", 1.0: "1.0x", 1.2: "1.2x"},
+                            tooltip={"placement": "bottom", "always_visible": False},
+                        ),
+                    ],
                 ),
-            ]
+
+                # RIGHT: Summary + two side-by-side graphs
+                html.Div(
+                    className="scenario-output-card",
+                    children=[
+                        dcc.Loading(
+                            type="default",
+                            children=[
+                                html.Div(id="scenario-summary"),
+                                html.Div(style={"height": "16px"}),
+                                html.Div(
+                                    className="scenario-chart-row",  # style as flex row
+                                    children=[
+                                        dcc.Graph(
+                                            id="scenario-chart-t1",
+                                            config={"displayModeBar": False},
+                                            style={"height": "350px"},
+                                        ),
+                                        dcc.Graph(
+                                            id="scenario-chart-t2",
+                                            config={"displayModeBar": False},
+                                            style={"height": "350px"},
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        )
+                    ],
+                ),
+            ],
         ),
-    ]
+    ],
 )
 
 
-# --- Callbacks ------------------------------------------------------------
+# -----------------------------------------------------------
+# Callbacks
+# -----------------------------------------------------------
 
 @callback(
-    Output("scenarios-daily-overview", "figure"),
-    Output("scenarios-detail-view", "figure"),
-    Input("scenario-year", "value"),
-    Input("scenario-threshold", "value"),
-    Input("scenarios-daily-overview", "clickData"),
+    Output("scenario-qty-label", "children"),
+    Output("scenario-trades-label", "children"),
+    Output("scenario-summary", "children"),
+    Output("scenario-chart-t1", "figure"),
+    Output("scenario-chart-t2", "figure"),
+    Input("scenario-period", "value"),
+    Input("scenario-qty", "value"),
+    Input("scenario-trades", "value"),
+    Input("scenario-price-mult", "value"),
 )
-def update_scenario_graphs(year, threshold, click_data):
-    if df.empty or not year or PRICE_COL is None:
-        return _empty_fig(), _empty_fig()
-
-    # 1. Filter by year
-    dff = df[df["year"] == year].copy()
-    if dff.empty:
-        return _empty_fig(f"No data for {year}"), _empty_fig()
-
-    # 2. Identify stress events (above threshold)
-    dff["is_stress"] = dff[PRICE_COL] > threshold
-
-    # 3. Aggregate to daily max/mean for the top chart
-    daily = dff.groupby("date").agg({
-        PRICE_COL: "max",
-        "is_stress": "any"
-    }).reset_index()
-    daily.rename(columns={PRICE_COL: "max_price"}, inplace=True)
-
-    # --- Top Figure: Daily Max Price ---
-    fig_top = go.Figure()
-
-    # Normal days
-    normal = daily[~daily["is_stress"]]
-    fig_top.add_trace(go.Scatter(
-        x=normal["date"], 
-        y=normal["max_price"],
-        mode="markers",
-        name="Normal Day",
-        marker=dict(color="#94a3b8", size=6, opacity=0.6)
-    ))
-
-    # Stress days
-    stress = daily[daily["is_stress"]]
-    fig_top.add_trace(go.Scatter(
-        x=stress["date"], 
-        y=stress["max_price"],
-        mode="markers",
-        name="Stress Event",
-        marker=dict(color="#ef4444", size=10, line=dict(width=2, color="#7f1d1d"))
-    ))
-
-    # Threshold line
-    fig_top.add_hline(y=threshold, line_dash="dash", line_color="var(--accent-2)", annotation_text="Threshold")
-
-    fig_top.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=40, r=20, t=20, b=40),
-        xaxis_title="Date",
-        yaxis_title="Max Price ($)",
-        hovermode="x unified",
-        clickmode="event+select",
-        autosize=True
-    )
-
-    # --- Bottom Figure: Intraday Detail ---
-    # Determine which date to show (from clickData or default to max price day)
-    if click_data:
-        clicked_date = click_data["points"][0]["x"]
-        target_date = pd.to_datetime(clicked_date).date()
-    else:
-        # Default to the day with the highest price
-        if not daily.empty:
-            target_date = daily.sort_values("max_price", ascending=False).iloc[0]["date"]
-        else:
-            target_date = dff["date"].iloc[0]
-
-    day_data = dff[dff["date"] == target_date].sort_values("datetime")
-    
-    if day_data.empty:
-        fig_bottom = _empty_fig("No data for selected date")
-    else:
-        fig_bottom = go.Figure()
-        
-        # Line chart for the day
-        fig_bottom.add_trace(go.Scatter(
-            x=day_data["datetime"],
-            y=day_data[PRICE_COL],
-            mode="lines+markers",
-            name="Price",
-            line=dict(color="#22d3ee", width=3),
-            marker=dict(size=6, color="#0ea5e9")
-        ))
-
-        # Highlight points above threshold
-        above = day_data[day_data[PRICE_COL] > threshold]
-        if not above.empty:
-            fig_bottom.add_trace(go.Scatter(
-                x=above["datetime"],
-                y=above[PRICE_COL],
-                mode="markers",
-                name="Above Threshold",
-                marker=dict(color="#ef4444", size=12, symbol="diamond")
-            ))
-
-        fig_bottom.update_layout(
+def run_scenario(period_value, qty_value, trades_value, price_mult):
+    # Empty figures helper
+    def empty_fig():
+        return go.Figure().update_layout(
             template="plotly_dark",
-            title=f"Intraday Profile: {target_date}",
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(15,23,42,0.5)",
-            margin=dict(l=40, r=20, t=40, b=40),
-            xaxis_title="Time of Day",
-            yaxis_title="Price ($)",
-            autosize=True
+            xaxis_title="",
+            yaxis_title="",
+            margin=dict(l=40, r=10, t=30, b=40),
         )
 
-    return fig_top, fig_bottom
+    if period_value is None:
+        return (
+            "",
+            "",
+            "Select a base month to run a scenario.",
+            empty_fig(),
+            empty_fig(),
+        )
+
+    # Base row
+    base_rows = data.loc[data["period"] == period_value]
+    if base_rows.empty:
+        return (
+            "",
+            "",
+            f"No data found for period {period_value}.",
+            empty_fig(),
+            empty_fig(),
+        )
+
+    row = base_rows.iloc[-1].copy()
+
+    # Baseline t+1/t+2 (actuals or labels)
+    baseline_t1 = row.get("target_1", None)
+    baseline_t2 = row.get("target_2", None)
+
+    # Override scenario inputs
+    row["total_transacted_quantity"] = qty_value
+    row["num_trades"] = trades_value
+
+    if "avg_std_price" in row.index and pd.notna(row["avg_std_price"]):
+        row["avg_std_price"] = row["avg_std_price"] * price_mult
+
+    # Build feature vector
+    X_scenario = pd.DataFrame([row])[feature_cols]
+    X_scaled = scaler.transform(X_scenario)
+
+    svr_pred = svr_model.predict(X_scaled)[0]  # [t+1, t+2]
+    rf_pred = rf_model.predict(X_scenario)[0]  # [t+1, t+2]
+
+    svr_t1, svr_t2 = svr_pred[0], svr_pred[1]
+    rf_t1, rf_t2 = rf_pred[0], rf_pred[1]
+
+    # Slider labels
+    qty_label = f"Current setting: {qty_value:,.0f} MWh"
+    trades_label = f"Current setting: {trades_value:,.0f} trades"
+
+    # Summary text + forecast cards
+    summary = html.Div(
+        children=[
+            html.H3(f"Scenario results for {pd.to_datetime(period_value).strftime('%b %Y')}"),
+
+            html.P(
+                f"Using total quantity = {qty_value:,.0f} MWh, "
+                f"num trades = {trades_value:,.0f}, "
+                f"price multiplier = {price_mult:.2f}x."
+            ),
+
+            html.Div(
+                className="scenario-cards",
+                children=[
+                    html.Div(
+                        className="scenario-card",
+                        children=[
+                            html.H4("SVR Forecast"),
+                            html.P(f"t+1 price: {svr_t1:,.2f}"),
+                            html.P(f"t+2 price: {svr_t2:,.2f}"),
+                        ],
+                    ),
+                    html.Div(
+                        className="scenario-card",
+                        children=[
+                            html.H4("Random Forest Forecast"),
+                            html.P(f"t+1 price: {rf_t1:,.2f}"),
+                            html.P(f"t+2 price: {rf_t2:,.2f}"),
+                        ],
+                    ),
+                ],
+            ),
+        ]
+    )
+
+    # --------- Build side-by-side charts ---------
+
+    # Chart 1: t+1 comparison
+    x1 = ["Baseline t+1", "SVR t+1", "RF t+1"]
+    y1 = [
+        baseline_t1 if pd.notna(baseline_t1) else None,
+        svr_t1,
+        rf_t1,
+    ]
+    colors1 = ["#888888", "#22d3ee", "#a855f7"]
+
+    fig_t1 = go.Figure(
+        data=[go.Bar(x=x1, y=y1, marker_color=colors1)]
+    )
+    fig_t1.update_layout(
+        template="plotly_dark",
+        title="t+1 Price: Baseline vs Scenario",
+        xaxis_title="",
+        yaxis_title="Price",
+        margin=dict(l=40, r=10, t=40, b=50),
+    )
+
+    # Chart 2: t+2 comparison
+    x2 = ["Baseline t+2", "SVR t+2", "RF t+2"]
+    y2 = [
+        baseline_t2 if pd.notna(baseline_t2) else None,
+        svr_t2,
+        rf_t2,
+    ]
+    colors2 = ["#888888", "#22d3ee", "#a855f7"]
+
+    fig_t2 = go.Figure(
+        data=[go.Bar(x=x2, y=y2, marker_color=colors2)]
+    )
+    fig_t2.update_layout(
+        template="plotly_dark",
+        title="t+2 Price: Baseline vs Scenario",
+        xaxis_title="",
+        yaxis_title="Price",
+        margin=dict(l=40, r=10, t=40, b=50),
+    )
+
+    return qty_label, trades_label, summary, fig_t1, fig_t2

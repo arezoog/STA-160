@@ -1,280 +1,384 @@
 import dash
-from dash import html, dcc, Input, Output, State, callback
+from dash import html, dcc, callback, Input, Output
+import numpy as np
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 
-from model import AVAILABLE_YEARS, compute_metrics, predict_probability
+from model import get_forecast_dashboard_data
 
-dash.register_page(__name__, path="/dashboard", name="Dashboard")
+dash.register_page(__name__, path="/dashboard", name="Forecast Dashboard")
 
+# -------------------------------------------------------------------------
+# Load all precomputed forecasting outputs once
+# -------------------------------------------------------------------------
 
-def _empty_dark_fig(message=None):
-    """Small helper to avoid the white-box effect before data loads."""
+results = get_forecast_dashboard_data()
+
+data = results["data"].copy()
+data["period_dt"] = pd.to_datetime(data["period"])
+
+comparison_df: pd.DataFrame = results["comparison_df"]
+future_df: pd.DataFrame = results["future_df"].copy()
+backtest_df: pd.DataFrame = results["backtest_df"]
+
+test_mask = results["test_mask"]
+test_df = data.loc[test_mask].copy()
+test_df["period_dt"] = pd.to_datetime(test_df["period"])
+
+y_test_df: pd.DataFrame = results["y_test"]
+y_test_arr = y_test_df.to_numpy()
+
+y_pred_dict = results["y_pred_test"]
+y_pred_svr = np.asarray(y_pred_dict["SVR_tuned"])
+y_pred_rf = np.asarray(y_pred_dict["RandomForest"])
+
+# Ensure future periods are datetime
+if "period_dt" not in future_df.columns:
+    future_df["period_dt"] = pd.to_datetime(future_df["period"])
+
+HORIZON_MAX = max(1, len(future_df))  # used for slider
+
+# -------------------------------------------------------------------------
+# Helpers
+# -------------------------------------------------------------------------
+
+def _empty_fig(message="No data available"):
     fig = go.Figure()
     fig.update_layout(
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=20, r=20, t=30, b=20),
+        margin=dict(l=40, r=20, t=50, b=40),
+        annotations=[
+            dict(
+                text=message,
+                x=0.5,
+                y=0.5,
+                xref="paper",
+                yref="paper",
+                showarrow=False,
+                font=dict(color="#9ca3af"),
+            )
+        ],
     )
-    if message:
-        fig.add_annotation(
-            text=message,
-            x=0.5,
-            y=0.5,
-            xref="paper",
-            yref="paper",
-            showarrow=False,
-            font=dict(color="#9ca3af"),
-        )
     return fig
 
 
-# --- Layout ---------------------------------------------------------------
+# -------------------------------------------------------------------------
+# Figures (static builders)
+# -------------------------------------------------------------------------
 
-sorted_years = sorted(AVAILABLE_YEARS) if AVAILABLE_YEARS else []
-default_years = sorted_years[-3:] if len(sorted_years) >= 3 else sorted_years
+def make_full_history_fig() -> go.Figure:
+    if data.empty:
+        return _empty_fig("No historical data available.")
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=data["period_dt"],
+            y=data["weighted_avg_price"],
+            mode="lines",
+            name="Weighted avg price",
+        )
+    )
+    fig.update_layout(
+        title="Historical RA Price Index (Monthly)",
+        xaxis_title="Period",
+        yaxis_title="Weighted avg price ($/kW-month)",
+        template="plotly_dark",
+        margin=dict(l=40, r=20, t=50, b=40),
+    )
+    return fig
+
+
+def make_test_1step_fig() -> go.Figure:
+    """
+    Actual vs predicted 1-step ahead prices on the 12-month test set.
+    """
+    if test_df.empty or y_test_arr.size == 0:
+        return _empty_fig("No test data available for 1-step forecast.")
+
+    x = test_df["period_dt"]
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=y_test_arr[:, 0],
+            mode="lines+markers",
+            name="Actual (t+1)",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=y_pred_svr[:, 0],
+            mode="lines+markers",
+            name="SVR tuned (t+1)",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=y_pred_rf[:, 0],
+            mode="lines+markers",
+            name="Random Forest (t+1)",
+            opacity=0.7,
+        )
+    )
+
+    fig.update_layout(
+        title="Holdout Test: 1-Step Ahead Forecast (Last 12 Months)",
+        xaxis_title="Period",
+        yaxis_title="Weighted avg price ($/kW-month)",
+        template="plotly_dark",
+        margin=dict(l=40, r=20, t=50, b=40),
+    )
+    return fig
+
+
+def make_backtest_fig() -> go.Figure:
+    """
+    Rolling 1-step backtest MAE over time (Ridge).
+    """
+    if backtest_df.empty:
+        return _empty_fig("No backtest results available.")
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=backtest_df["period"],
+            y=backtest_df["mae"],
+            mode="lines+markers",
+            name="1-step MAE (Ridge backtest)",
+        )
+    )
+
+    avg_mae = results["avg_backtest_mae"]
+    if np.isfinite(avg_mae):
+        fig.add_hline(
+            y=avg_mae,
+            line_width=1,
+            line_dash="dash",
+            line_color="red",
+            annotation_text=f"Average MAE = {avg_mae:.2f}",
+            annotation_position="top right",
+        )
+
+    fig.update_layout(
+        title="Rolling Backtest – 1-Step Ahead Errors (Ridge baseline)",
+        xaxis_title="Period",
+        yaxis_title="MAE (absolute error)",
+        template="plotly_dark",
+        margin=dict(l=40, r=20, t=50, b=40),
+    )
+    return fig
+
+
+def make_metrics_table() -> html.Table:
+    """
+    Simple HTML table for model comparison (SVR baseline, tuned SVR, RF).
+    """
+    if comparison_df.empty:
+        return html.Table(
+            html.Tbody(
+                html.Tr(html.Td("No model comparison metrics available."))
+            )
+        )
+
+    df = comparison_df[
+        ["Model", "R2_t+1", "R2_t+2", "MAE_t+1", "MAE_t+2", "RMSE_t+1", "RMSE_t+2"]
+    ].round(3)
+
+    header = html.Tr(
+        [
+            html.Th("Model"),
+            html.Th("R² (t+1)"),
+            html.Th("R² (t+2)"),
+            html.Th("MAE (t+1)"),
+            html.Th("MAE (t+2)"),
+            html.Th("RMSE (t+1)"),
+            html.Th("RMSE (t+2)"),
+        ]
+    )
+
+    body_rows = []
+    for _, row in df.iterrows():
+        body_rows.append(
+            html.Tr(
+                [
+                    html.Td(row["Model"]),
+                    html.Td(row["R2_t+1"]),
+                    html.Td(row["R2_t+2"]),
+                    html.Td(row["MAE_t+1"]),
+                    html.Td(row["MAE_t+2"]),
+                    html.Td(row["RMSE_t+1"]),
+                    html.Td(row["RMSE_t+2"]),
+                ]
+            )
+        )
+
+    return html.Table(
+        [html.Thead(header), html.Tbody(body_rows)],
+        style={
+            "width": "100%",
+            "borderCollapse": "collapse",
+            "fontSize": "0.85rem",
+        },
+    )
+
+
+# -------------------------------------------------------------------------
+# Layout with controls + graphs
+# -------------------------------------------------------------------------
 
 layout = html.Div(
-    style={"maxWidth": "1200px", "margin": "16px auto 32px auto", "padding": "0 16px"},
+    style={"maxWidth": "1200px", "margin": "24px auto 32px auto", "padding": "0 16px"},
     children=[
-        dcc.Store(id="metrics-store"),
+        # Top summary + controls
         html.Div(
-            style={
-                "display": "flex",
-                "flexWrap": "wrap",
-                "gap": "16px",
-                "alignItems": "stretch",
-            },
+            className="glass-card",
+            style={"padding": "24px", "marginBottom": "24px"},
             children=[
-                # LEFT: configuration + metrics
+                html.H2("Resource Adequacy Price Forecast Dashboard"),
+                html.P(
+                    "Use the controls to explore forecasts: choose model, "
+                    "adjust forecast horizon, and compare historical vs future prices.",
+                    style={"opacity": 0.85},
+                ),
+
+                # CONTROL PANEL
                 html.Div(
-                    className="glass-card",
                     style={
-                        "flex": "1 1 260px",
                         "display": "flex",
-                        "flexDirection": "column",
-                        "gap": "12px",
+                        "flexWrap": "wrap",
+                        "gap": "16px",
+                        "marginTop": "12px",
+                        "marginBottom": "8px",
                     },
                     children=[
-                        html.H2("Model Dashboard", style={"margin": "0 0 4px 0", "fontSize": "1.1rem"}),
-                        html.P(
-                            "Select training years and thresholds, then fit a simple stress-event model.",
-                            className="text-muted",
-                            style={"fontSize": "0.85rem", "marginBottom": "4px"},
-                        ),
+                        # Model selector
                         html.Div(
+                            style={"minWidth": "220px"},
                             children=[
                                 html.Label(
-                                    "Training years",
+                                    "Forecast model",
                                     style={
                                         "fontSize": "0.8rem",
                                         "textTransform": "uppercase",
-                                        "letterSpacing": "0.14em",
+                                        "letterSpacing": "0.04em",
                                     },
                                 ),
                                 dcc.Dropdown(
-                                    id="year-dropdown",
-                                    options=[{"label": str(y), "value": y} for y in sorted_years],
-                                    value=default_years,
-                                    multi=True,
-                                    placeholder="Select years…",
+                                    id="forecast-model",
+                                    options=[
+                                        {"label": "SVR (tuned)", "value": "SVR_tuned"},
+                                        {"label": "Random Forest", "value": "RandomForest"},
+                                        {"label": "Compare both", "value": "both"},
+                                    ],
+                                    value="both",
+                                    clearable=False,
                                 ),
-                            ]
+                            ],
                         ),
+                        # Forecast horizon slider
                         html.Div(
+                            style={"minWidth": "260px"},
                             children=[
                                 html.Label(
-                                    "Test size",
+                                    "Forecast horizon (months ahead)",
                                     style={
                                         "fontSize": "0.8rem",
                                         "textTransform": "uppercase",
-                                        "letterSpacing": "0.14em",
+                                        "letterSpacing": "0.04em",
                                     },
                                 ),
-                                html.Div(
-                                    children=dcc.Slider(
-                                        id="test-size-slider",
-                                        min=0.1,
-                                        max=0.5,
-                                        step=0.05,
-                                        value=0.3,
-                                        marks={0.1: "10%", 0.3: "30%", 0.5: "50%"},
-                                        tooltip={"placement": "bottom"},
-                                    ),
-                                    style={"marginTop": "4px"},
-                                ),
-                            ]
-                        ),
-                        html.Div(
-                            children=[
-                                html.Label(
-                                    "Stress event threshold (percentile)",
-                                    style={
-                                        "fontSize": "0.8rem",
-                                        "textTransform": "uppercase",
-                                        "letterSpacing": "0.14em",
+                                dcc.Slider(
+                                    id="forecast-horizon",
+                                    min=1,
+                                    max=HORIZON_MAX,
+                                    step=1,
+                                    value=min(12, HORIZON_MAX),
+                                    marks={
+                                        i: str(i)
+                                        for i in range(1, HORIZON_MAX + 1)
                                     },
-                                ),
-                                html.Div(
-                                    children=dcc.Slider(
-                                        id="event-p-slider",
-                                        min=80,
-                                        max=99,
-                                        step=1,
-                                        value=95,
-                                        marks={80: "80", 90: "90", 95: "95", 99: "99"},
-                                        tooltip={"placement": "bottom"},
-                                    ),
-                                    style={"marginTop": "4px"},
-                                ),
-                            ]
-                        ),
-                        html.Button(
-                            "⚡ Train / Refresh model",
-                            id="train-btn",
-                            n_clicks=0,
-                            className="primary-button",
-                            style={"marginTop": "4px"},
-                        ),
-                        html.Div(
-                            id="model-metrics",
-                            className="text-muted",
-                            style={"fontSize": "0.85rem", "marginTop": "8px", "lineHeight": "1.6"},
-                        ),
-                    ],
-                ),
-                # MIDDLE: graphs
-                html.Div(
-                    className="glass-card",
-                    style={
-                        "flex": "2 1 480px",
-                        "display": "flex",
-                        "flexDirection": "column",
-                        "gap": "12px",
-                    },
-                    children=[
-                        html.H3("Model performance", style={"margin": "0 0 4px 0", "fontSize": "1.0rem"}),
-                        dcc.Tabs(
-                            id="viz-tabs",
-                            value="ts-tab",
-                            parent_className="custom-tabs",
-                            children=[
-                                dcc.Tab(
-                                    label="Predictions vs actual",
-                                    value="ts-tab",
-                                    children=[
-                                        dcc.Graph(
-                                            id="ts-graph",
-                                            className="dash-graph",
-                                            figure=_empty_dark_fig("Train the model to see time-series output."),
-                                        )
-                                    ],
-                                ),
-                                dcc.Tab(
-                                    label="ROC curve",
-                                    value="roc-tab",
-                                    children=[
-                                        dcc.Graph(
-                                            id="roc-graph",
-                                            className="dash-graph",
-                                            figure=_empty_dark_fig("Train the model to see the ROC curve."),
-                                        )
-                                    ],
-                                ),
-                                dcc.Tab(
-                                    label="Probability distribution",
-                                    value="hist-tab",
-                                    children=[
-                                        dcc.Graph(
-                                            id="hist-graph",
-                                            className="dash-graph",
-                                            figure=_empty_dark_fig("Train the model to see probabilities."),
-                                        )
-                                    ],
                                 ),
                             ],
                         ),
                     ],
                 ),
-                # RIGHT: live prediction
+
+                html.H4("Model Comparison (12-month holdout)"),
+                make_metrics_table(),
+            ],
+        ),
+
+        # ROW 1: full history + interactive forecast
+        html.Div(
+            style={
+                "display": "grid",
+                "gridTemplateColumns": "minmax(0, 1fr) minmax(0, 1fr)",
+                "gap": "16px",
+                "marginBottom": "24px",
+            },
+            children=[
                 html.Div(
                     className="glass-card",
-                    style={
-                        "flex": "1 1 260px",
-                        "display": "flex",
-                        "flexDirection": "column",
-                        "gap": "10px",
-                    },
+                    style={"padding": "16px"},
                     children=[
-                        html.H3("Live prediction", style={"margin": "0", "fontSize": "1.0rem"}),
-                        html.P(
-                            "Use the trained model to estimate stress probability for a single transaction.",
-                            className="text-muted",
-                            style={"fontSize": "0.8rem"},
+                        html.H4("Historical Price Index"),
+                        dcc.Graph(
+                            id="full-history-graph",
+                            figure=make_full_history_fig(),
+                            style={"height": "360px"},
                         ),
-                        html.Label(
-                            "Quantity (MW)",
-                            style={
-                                "fontSize": "0.8rem",
-                                "textTransform": "uppercase",
-                                "letterSpacing": "0.14em",
-                            },
+                    ],
+                ),
+                html.Div(
+                    className="glass-card",
+                    style={"padding": "16px"},
+                    children=[
+                        html.H4("Interactive Forecast"),
+                        dcc.Graph(
+                            id="interactive-forecast-graph",
+                            style={"height": "360px"},
+                            figure=_empty_fig("Adjust controls to see forecast."),
                         ),
-                        dcc.Input(
-                            id="in-qty",
-                            type="number",
-                            debounce=True,
-                            placeholder="e.g. 50",
+                    ],
+                ),
+            ],
+        ),
+
+        # ROW 2: test set + backtest
+        html.Div(
+            style={
+                "display": "grid",
+                "gridTemplateColumns": "minmax(0, 1fr) minmax(0, 1fr)",
+                "gap": "16px",
+            },
+            children=[
+                html.Div(
+                    className="glass-card",
+                    style={"padding": "16px"},
+                    children=[
+                        html.H4("Holdout Test – 1-Step Ahead (Last 12 Months)"),
+                        dcc.Graph(
+                            id="test-1step-graph",
+                            figure=make_test_1step_fig(),
+                            style={"height": "360px"},
                         ),
-                        html.Label(
-                            "Total charge ($)",
-                            style={
-                                "fontSize": "0.8rem",
-                                "textTransform": "uppercase",
-                                "letterSpacing": "0.14em",
-                                "marginTop": "4px",
-                            },
-                        ),
-                        dcc.Input(
-                            id="in-charge",
-                            type="number",
-                            debounce=True,
-                            placeholder="e.g. 120000",
-                        ),
-                        html.Label(
-                            "Delivery month (1–12)",
-                            style={
-                                "fontSize": "0.8rem",
-                                "textTransform": "uppercase",
-                                "letterSpacing": "0.14em",
-                                "marginTop": "4px",
-                            },
-                        ),
-                        dcc.Input(
-                            id="in-month",
-                            type="number",
-                            min=1,
-                            max=12,
-                            step=1,
-                            debounce=True,
-                            placeholder="1–12",
-                        ),
-                        html.Button(
-                            "Compute probability",
-                            id="predict-btn",
-                            n_clicks=0,
-                            className="primary-button",
-                            style={"marginTop": "6px"},
-                        ),
-                        html.Div(
-                            id="predict-out",
-                            style={
-                                "marginTop": "10px",
-                                "fontSize": "0.9rem",
-                            },
-                            children="Ready… train the model and enter inputs to see a probability.",
+                    ],
+                ),
+                html.Div(
+                    className="glass-card",
+                    style={"padding": "16px"},
+                    children=[
+                        html.H4("Rolling Backtest – 1-Step MAE"),
+                        dcc.Graph(
+                            id="backtest-graph",
+                            figure=make_backtest_fig(),
+                            style={"height": "360px"},
                         ),
                     ],
                 ),
@@ -283,202 +387,112 @@ layout = html.Div(
     ],
 )
 
-# --- Callbacks ------------------------------------------------------------
-
-
-@callback(
-    Output("metrics-store", "data"),
-    Output("model-metrics", "children"),
-    Output("ts-graph", "figure"),
-    Output("roc-graph", "figure"),
-    Output("hist-graph", "figure"),
-    Input("train-btn", "n_clicks"),
-    State("year-dropdown", "value"),
-    State("test-size-slider", "value"),
-    State("event-p-slider", "value"),
-)
-def update_model(n_clicks, years, test_size, event_p):
-    if not sorted_years:
-        msg = "No years available from model.AVAILABLE_YEARS."
-        empty = _empty_dark_fig(msg)
-        return None, [html.Div(msg)], empty, empty, empty
-
-    if not years:
-        years = default_years or sorted_years
-
-    # event_p slider is in 80–99; convert to percentile in [0,1]
-    if event_p is None:
-        event_p = 95
-    event_percentile = float(event_p) / 100.0
-
-    if test_size is None:
-        test_size = 0.3
-
-    # Compute metrics using shared model helper.
-    results = compute_metrics(
-        years=years,
-        event_percentile=event_percentile,
-        test_size=test_size,
-        random_state=42,
-    )
-
-    acc = results.get("accuracy")
-    auc = results.get("auc")
-    brier = results.get("brier")
-
-    metrics_text = []
-    if acc is not None:
-        metrics_text.append(html.Div(f"Accuracy: {acc:.1%}", style={"color": "#00ff9d"}))
-    if auc is not None:
-        metrics_text.append(html.Div(f"ROC AUC: {auc:.3f}", style={"color": "#38bdf8"}))
-    if brier is not None:
-        metrics_text.append(html.Div(f"Brier score: {brier:.3f}", style={"color": "#fbbf24"}))
-
-    # Time-series: probability & events
-    ts_data = results.get("ts", {})
-    df_ts = pd.DataFrame(
-        {
-            "date": pd.to_datetime(ts_data.get("datetime", [])),
-            "prob_pred": ts_data.get("p_hat", []),
-            "actual_event": ts_data.get("actual", []),
-        }
-    )
-
-    fig_ts = _empty_dark_fig()
-    if not df_ts.empty:
-        fig_ts = go.Figure()
-
-        events_only = df_ts[df_ts["actual_event"] == 1]
-        if not events_only.empty:
-            fig_ts.add_trace(
-                go.Scatter(
-                    x=events_only["date"],
-                    y=events_only["prob_pred"],
-                    mode="markers",
-                    name="Stress event",
-                    marker=dict(color="#ff0055", size=8, symbol="x", line=dict(width=2, color="#ff0055")),
-                )
-            )
-
-        fig_ts.add_trace(
-            go.Scatter(
-                x=df_ts["date"],
-                y=df_ts["prob_pred"],
-                mode="lines",
-                name="Predicted probability",
-                line=dict(color="#00f2ff", width=2, shape="spline"),
-                fill="tozeroy",
-                fillcolor="rgba(0, 242, 255, 0.05)",
-            )
-        )
-        fig_ts.update_layout(
-            template="plotly_dark",
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(15,23,42,0.6)",
-            margin=dict(l=40, r=20, t=20, b=40),
-            xaxis_title="Date",
-            yaxis_title="Stress probability",
-            hovermode="x unified",
-        )
-
-    # ROC curve
-    roc_data = results.get("roc_points", {})
-    fpr = roc_data.get("fpr", [])
-    tpr = roc_data.get("tpr", [])
-
-    fig_roc = _empty_dark_fig()
-    if len(fpr) and len(tpr):
-        fig_roc = go.Figure()
-        fig_roc.add_trace(
-            go.Scatter(
-                x=fpr,
-                y=tpr,
-                mode="lines",
-                name="ROC",
-                line=dict(color="#22d3ee", width=3),
-            )
-        )
-        fig_roc.add_shape(
-            type="line",
-            x0=0,
-            y0=0,
-            x1=1,
-            y1=1,
-            line=dict(dash="dash", color="#4b5563"),
-        )
-        fig_roc.update_layout(
-            template="plotly_dark",
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(15,23,42,0.6)",
-            margin=dict(l=40, r=20, t=20, b=40),
-            xaxis_title="False positive rate",
-            yaxis_title="True positive rate",
-        )
-
-    # Histogram of predicted probabilities
-    fig_hist = _empty_dark_fig()
-    if not df_ts.empty:
-        fig_hist = px.histogram(df_ts, x="prob_pred", nbins=30)
-        fig_hist.update_traces(marker_line_width=0)
-        fig_hist.update_layout(
-            template="plotly_dark",
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(15,23,42,0.6)",
-            margin=dict(l=40, r=20, t=20, b=40),
-            xaxis_title="Predicted probability",
-            yaxis_title="Count",
-            showlegend=False,
-        )
-
-    store_data = {"years": years, "test_size": float(test_size), "event_p": float(event_percentile)}
-    return store_data, metrics_text, fig_ts, fig_roc, fig_hist
-
+# -------------------------------------------------------------------------
+# Callback: interactive forecast graph
+# -------------------------------------------------------------------------
 
 @callback(
-    Output("predict-out", "children"),
-    Input("predict-btn", "n_clicks"),
-    State("metrics-store", "data"),
-    State("in-qty", "value"),
-    State("in-charge", "value"),
-    State("in-month", "value"),
-    prevent_initial_call=True,
+    Output("interactive-forecast-graph", "figure"),
+    Input("forecast-model", "value"),
+    Input("forecast-horizon", "value"),
 )
-def do_predict(n_clicks, store, qty, charge, month):
-    if not n_clicks:
-        raise dash.exceptions.PreventUpdate
+def update_forecast_graph(model_choice, horizon):
+    """
+    Update the forecast plot based on:
+      - model_choice: 'SVR_tuned', 'RandomForest', or 'both'
+      - horizon: how many months ahead to show (1..len(future_df))
+    """
+    if future_df.empty or data.empty:
+        return _empty_fig("No forecast data available.")
 
-    if not store:
-        return "⚠️ Train the model first."
+    # Safety: clip horizon
+    if horizon is None or horizon < 1:
+        horizon = 1
+    horizon = min(horizon, len(future_df))
 
-    if qty is None or charge is None or month is None:
-        return "Please fill in quantity, charge, and month."
+    # Last 36 months of history for context
+    hist_tail = data.tail(36).copy()
+    hist_tail_x = hist_tail["period_dt"]
+    hist_tail_y = hist_tail["weighted_avg_price"]
 
-    try:
-        prob = predict_probability(
-            store["years"],
-            {"qty": float(qty), "charge": float(charge), "month": float(month)},
-            store["event_p"],
-            store["test_size"],
-            42,
+    # Slice future forecast
+    fut = future_df.iloc[:horizon].copy()
+    fut_x = fut["period_dt"]
+    svr_y = fut["SVR_forecast"] if "SVR_forecast" in fut.columns else None
+    rf_y = fut["RF_forecast"] if "RF_forecast" in fut.columns else None
+
+    fig = go.Figure()
+
+    # Historical line
+    fig.add_trace(
+        go.Scatter(
+            x=hist_tail_x,
+            y=hist_tail_y,
+            mode="lines",
+            name="Historical price (last 36 months)",
+            line=dict(width=2),
         )
-    except Exception as e:
-        return f"Error computing probability: {e}"
-
-    percentage = float(prob) * 100.0
-    color = "#ff0055" if percentage > 50 else "#00ff9d"
-
-    return html.Div(
-        [
-            html.Span("Estimated stress probability:", style={"fontSize": "0.85rem"}),
-            html.Span(
-                f" {percentage:.1f}%",
-                style={
-                    "fontSize": "1.1rem",
-                    "fontWeight": "600",
-                    "marginLeft": "6px",
-                    "color": color,
-                    "textShadow": f"0 0 10px {color}",
-                },
-            ),
-        ]
     )
+
+    # Forecast lines depending on model_choice
+    if model_choice in ["SVR_tuned", "both"] and svr_y is not None:
+        fig.add_trace(
+            go.Scatter(
+                x=fut_x,
+                y=svr_y,
+                mode="lines+markers",
+                name="SVR forecast",
+            )
+        )
+
+    if model_choice in ["RandomForest", "both"] and rf_y is not None:
+        fig.add_trace(
+            go.Scatter(
+                x=fut_x,
+                y=rf_y,
+                mode="lines+markers",
+                name="RF forecast",
+                opacity=0.7,
+            )
+        )
+
+    # Compute y-range for vertical split marker
+    y_vals = list(hist_tail_y.values)
+    if model_choice in ["SVR_tuned", "both"] and svr_y is not None:
+        y_vals += list(svr_y.values)
+    if model_choice in ["RandomForest", "both"] and rf_y is not None:
+        y_vals += list(rf_y.values)
+
+    if y_vals:
+        y_min = min(y_vals)
+        y_max = max(y_vals)
+    else:
+        y_min, y_max = 0, 1
+
+    # Vertical line at forecast start using shape (safe with datetimes)
+    forecast_start = hist_tail_x.iloc[-1]
+    fig.add_shape(
+        type="line",
+        x0=forecast_start,
+        x1=forecast_start,
+        y0=y_min,
+        y1=y_max,
+        line=dict(color="gray", width=1, dash="dash"),
+    )
+    fig.add_annotation(
+        x=forecast_start,
+        y=y_max,
+        text="Forecast start",
+        showarrow=False,
+        yshift=10,
+        font=dict(size=10, color="gray"),
+    )
+
+    fig.update_layout(
+        title=f"{horizon}-Month Ahead Forecast ({model_choice})",
+        xaxis_title="Period",
+        yaxis_title="Weighted avg price ($/kW-month)",
+        template="plotly_dark",
+        margin=dict(l=40, r=20, t=50, b=40),
+    )
+    return fig

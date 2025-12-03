@@ -1,249 +1,346 @@
-/* assets/style.css - Midnight Aurora (Holographic Edition) */
-
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=Orbitron:wght@500;700&display=swap');
+/* ---------------------------------------------------
+   GLOBAL / THEME
+--------------------------------------------------- */
 
 :root {
-    /* Core colors */
-    --bg: #020617;
-    --card-bg: rgba(15, 23, 42, 0.85); /* Slightly more transparent for grid visibility */
-    --card-border: rgba(148, 163, 184, 0.25);
-    --accent-1: #22d3ee;
-    --accent-2: #a855f7;
-    --accent-soft: rgba(56, 189, 248, 0.35);
-    --text-main: #e5e7eb;
-    --text-muted: #9ca3af;
-
-    /* Spacing scale */
-    --space-xs: 4px;
-    --space-sm: 8px;
-    --space-md: 16px;
-    --space-lg: 24px;
-    --space-xl: 32px;
+  --bg-main: #020617;
+  --bg-alt: #020825;
+  --bg-card: #02081e;
+  --accent-cyan: #22d3ee;
+  --accent-purple: #a855f7;
+  --accent-soft: rgba(34, 211, 238, 0.25);
+  --text-main: #e5f4ff;
+  --text-muted: #9ca3af;
+  --border-subtle: rgba(148, 163, 184, 0.35);
 }
 
-html, body { height: 100%; }
-html { scroll-behavior: smooth; }
-*, *::before, *::after { box-sizing: border-box; }
-
-/* --- ANIMATED BACKGROUND LAYER --- */
-/* 1. Static Tech Grid */
-body::before {
-    content: "";
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    /* Tiny cyan grid lines */
-    background-image: 
-        linear-gradient(rgba(34, 211, 238, 0.05) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(34, 211, 238, 0.05) 1px, transparent 1px);
-    background-size: 50px 50px;
-    z-index: -2;
-    pointer-events: none;
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background-color: var(--bg-main);
+  color: var(--text-main);
+  font-family: "Rajdhani", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
-/* 2. Scanning Beam Animation */
-@keyframes scanline {
-    0% { background-position: 0% 0%; }
-    100% { background-position: 0% 200%; }
-}
-
-body::after {
-    content: "";
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    /* A moving horizontal highlight */
-    background: linear-gradient(to bottom, transparent 40%, rgba(34, 211, 238, 0.05) 50%, transparent 60%);
-    background-size: 100% 200%; /* Double height for smooth looping */
-    animation: scanline 8s linear infinite;
-    z-index: -1;
-    pointer-events: none;
-}
-
+/* Subtle grid background */
 body {
-    margin: 0;
-    font-family: 'Space Grotesk', system-ui, -apple-system, sans-serif;
-    background-color: var(--bg);
-    /* Deep ambient glow behind the grid */
-    background-image:
-        radial-gradient(circle at 15% 50%, rgba(124, 58, 237, 0.15), transparent 40%),
-        radial-gradient(circle at 85% 30%, rgba(6, 182, 212, 0.1), transparent 40%);
-    color: var(--text-main);
-    overflow-x: hidden;
-    font-size: clamp(14px, 1.1vw + 12px, 16px);
-    line-height: 1.6;
+  background-image:
+    radial-gradient(circle at 0 0, rgba(148, 163, 184, 0.15) 0, transparent 60%),
+    radial-gradient(circle at 100% 0, rgba(37, 99, 235, 0.25) 0, transparent 55%),
+    linear-gradient(to bottom, #020617 0%, #020617 40%, #020617 100%),
+    linear-gradient(
+      rgba(15, 23, 42, 0.7) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      90deg,
+      rgba(15, 23, 42, 0.7) 1px,
+      transparent 1px
+    );
+  background-size:
+    100% 100%,
+    100% 100%,
+    100% 100%,
+    60px 60px,
+    60px 60px;
+  background-position:
+    0 0,
+    0 0,
+    0 0,
+    0 0,
+    0 0;
 }
 
-/* --- PULSE ANIMATION FOR ALERTS --- */
-@keyframes pulse-red {
-    0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
-    70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+/* Remove default dcc component outlines */
+* {
+  box-sizing: border-box;
 }
 
-.pulse-alert {
-    animation: pulse-red 2s infinite;
-    border: 1px solid #ef4444 !important;
-    background: rgba(239, 68, 68, 0.1) !important;
-    color: #fca5a5 !important;
+a {
+  color: var(--accent-cyan);
+  text-decoration: none;
 }
 
-/* --- TYPOGRAPHY --- */
-h1, h2 {
-    font-family: 'Orbitron', sans-serif;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    margin-top: 0;
-    margin-bottom: 0.8em;
-    background: linear-gradient(120deg, #f9fafb, var(--accent-1), var(--accent-2));
-    background-size: 200% auto;
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-    text-shadow: 0 0 20px rgba(34, 211, 238, 0.4); /* Increased glow */
+a:hover {
+  text-decoration: underline;
 }
 
-h3, h4, h5 {
-    font-family: 'Space Grotesk', sans-serif;
-    color: #e5e7eb;
-    margin-bottom: 0.6em;
-}
+/* ---------------------------------------------------
+   NAVBAR
+--------------------------------------------------- */
 
-/* --- NAVBAR (UPDATED) --- */
 .navbar {
-    position: sticky;
-    top: 0;
-    z-index: 50;
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    background: rgba(2, 6, 23, 0.7);
-    border-bottom: 1px solid rgba(148, 163, 184, 0.15);
-    padding: 0;
+  width: 100%;
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  background: radial-gradient(circle at top left, rgba(34, 211, 238, 0.08), transparent 55%),
+              radial-gradient(circle at top right, rgba(168, 85, 247, 0.12), transparent 55%),
+              rgba(15, 23, 42, 0.95);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+  backdrop-filter: blur(12px);
 }
 
 .navbar-inner {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 0 24px;
-    height: 70px; /* Fixed height ensures vertical alignment */
-    display: flex;
-    align-items: center;
-    justify-content: space-between; /* Pushes Logo to left, Links to right */
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0.75rem 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
-/* Container for the tabs */
+/* Right-side nav links */
 .nav-links {
-    display: flex;
-    gap: 32px; /* The Magic Number: Controls space between tabs */
-    align-items: center;
+  display: flex;
+  gap: 1.5rem;
+  align-items: center;
 }
 
+/* Individual nav item */
 .nav-link {
-    text-decoration: none;
-    color: var(--text-muted);
-    font-family: 'Orbitron', sans-serif;
-    font-size: 0.85rem;
-    font-weight: 600;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    transition: all 0.3s ease;
-    padding: 8px 0;
-    position: relative;
+  font-family: "Rajdhani", sans-serif;
+  font-size: 0.9rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  text-decoration: none;
+  position: relative;
+  padding-bottom: 0.25rem;
+  transition: color 0.15s ease-out;
+}
+
+.nav-link::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple));
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.8);
+  transition: width 0.18s ease-out;
 }
 
 .nav-link:hover {
-    color: var(--accent-1);
-    text-shadow: 0 0 8px rgba(34, 211, 238, 0.5);
-}
-
-/* Animated Underline */
-.nav-link::after {
-    content: '';
-    position: absolute;
-    width: 0;
-    height: 2px;
-    bottom: 0;
-    left: 0;
-    background-color: var(--accent-1);
-    transition: width 0.3s ease;
-    box-shadow: 0 0 8px var(--accent-1);
+  color: var(--text-main);
 }
 
 .nav-link:hover::after {
+  width: 100%;
+}
+
+/* Active page (optional helper class) */
+.nav-link-active {
+  color: var(--accent-cyan) !important;
+}
+
+.nav-link-active::after {
+  width: 100%;
+}
+
+/* ---------------------------------------------------
+   PAGE LAYOUT
+--------------------------------------------------- */
+
+.page-container {
+  max-width: 1180px;
+  margin: 1.8rem auto 2.5rem;
+  padding: 0 1.25rem 3rem;
+}
+
+/* Page header */
+.page-header {
+  margin-bottom: 1.75rem;
+}
+
+.page-header h2 {
+  font-family: "Orbitron", system-ui, sans-serif;
+  letter-spacing: 0.22em;
+  font-size: 1.35rem;
+  text-transform: uppercase;
+  text-shadow: 0 0 15px rgba(34, 211, 238, 0.45);
+}
+
+.page-header p {
+  margin-top: 0.35rem;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+/* Cards */
+.card,
+.scenario-input-card,
+.scenario-output-card {
+  background: radial-gradient(circle at top left, rgba(34, 211, 238, 0.08), transparent 55%),
+              radial-gradient(circle at bottom right, rgba(15, 23, 42, 0.85), #020617);
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  box-shadow: 0 18px 45px rgba(15, 23, 42, 0.85);
+  padding: 1.2rem 1.4rem;
+}
+
+/* ---------------------------------------------------
+   SCENARIO LAB LAYOUT
+--------------------------------------------------- */
+
+.scenario-grid {
+  display: flex;
+  gap: 1.6rem;
+  align-items: flex-start;
+}
+
+/* Left column – sliders */
+.scenario-input-card {
+  flex: 0 0 340px;   /* fixed-ish width column */
+}
+
+/* Right column – summary + charts */
+.scenario-output-card {
+  flex: 1;
+  min-width: 0;      /* prevents overflow in flex layouts */
+}
+
+/* Row containing the two charts side by side */
+.scenario-chart-row {
+  display: flex;
+  flex-direction: row;
+  gap: 1rem;
+  margin-top: 0.5rem;
+}
+
+/* Ensure both graphs share the row evenly */
+.scenario-chart-row .dash-graph {
+  flex: 1;
+}
+
+/* For narrower screens, stack them */
+@media (max-width: 900px) {
+  .scenario-grid {
+    flex-direction: column;
+  }
+
+  .scenario-input-card {
     width: 100%;
+  }
+
+  .scenario-chart-row {
+    flex-direction: column;
+  }
 }
 
-/* --- CARDS (Glassmorphism) --- */
-.glass-card {
-    background: var(--card-bg);
-    border-radius: 20px;
-    border: 1px solid var(--card-border);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-    padding: 20px;
-    transition: all 0.3s ease;
-    backdrop-filter: blur(8px); /* Blur content behind card */
+/* Scenario summary cards (SVR / RF) */
+.scenario-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-top: 0.8rem;
 }
 
-.glass-card:hover {
-    transform: translateY(-4px);
-    border-color: rgba(56, 189, 248, 0.5);
-    box-shadow: 0 20px 50px rgba(6, 182, 212, 0.15);
+.scenario-card {
+  flex: 1 1 220px;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  background: radial-gradient(circle at top left, rgba(34, 211, 238, 0.12), transparent 55%),
+              rgba(15, 23, 42, 0.9);
+  padding: 0.9rem 1rem;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.9);
 }
 
-/* --- BUTTONS --- */
-.primary-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 10px 20px;
-    border-radius: 8px;
-    border: 1px solid var(--accent-1);
-    background: rgba(34, 211, 238, 0.1);
-    color: var(--accent-1);
-    font-family: 'Orbitron', sans-serif;
-    font-weight: 700;
-    text-transform: uppercase;
-    cursor: pointer;
-    transition: 0.3s;
-    box-shadow: 0 0 10px rgba(34, 211, 238, 0.1);
-}
-.primary-button:hover {
-    background: var(--accent-1);
-    color: #000;
-    box-shadow: 0 0 20px rgba(34, 211, 238, 0.6);
-    transform: translateY(-2px);
+.scenario-card h4 {
+  margin: 0 0 0.35rem;
+  font-family: "Orbitron", sans-serif;
+  font-size: 0.95rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--accent-cyan);
 }
 
-/* --- BADGE --- */
-.badge-pill {
-    padding: 4px 12px;
-    border-radius: 99px;
-    border: 1px solid rgba(148, 163, 184, 0.4);
-    background: rgba(255, 255, 255, 0.03);
-    font-size: 0.75rem;
-    color: var(--text-muted);
+.scenario-card p {
+  margin: 0.1rem 0;
+  font-size: 0.95rem;
 }
 
-/* --- DASH COMPONENTS OVERRIDES --- */
-.Select-control {
-    background-color: rgba(15, 23, 42, 0.6) !important;
-    border: 1px solid rgba(148, 163, 184, 0.3) !important;
-    color: white !important;
+/* Slider value labels */
+.slider-value-label {
+  font-size: 0.85rem;
+  color: var(--text-muted);
 }
-.Select-menu-outer {
-    background-color: #020617 !important;
-    border: 1px solid var(--accent-1) !important;
-}
-.Select-value-label { color: white !important; }
-.Select-option { background-color: transparent !important; color: white !important; }
-.Select-option:hover { background-color: var(--accent-1) !important; color: black !important; }
 
-/* Custom Scrollbar */
-::-webkit-scrollbar { width: 8px; }
-::-webkit-scrollbar-track { background: #020617; }
-::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: var(--accent-1); }
+/* ---------------------------------------------------
+   DASH COMPONENT THEMING
+--------------------------------------------------- */
+
+/* Dropdown – dark / sci-fi style */
+.dropdown-dark .Select-control,
+.dropdown-dark .Select-menu-outer {
+  background-color: rgba(15, 23, 42, 0.96) !important;
+  border-color: var(--border-subtle) !important;
+  color: var(--text-main) !important;
+}
+
+.dropdown-dark .Select-placeholder,
+.dropdown-dark .Select-value-label {
+  color: var(--text-main) !important;
+  font-size: 0.9rem;
+}
+
+.dropdown-dark .Select-menu-outer {
+  border-radius: 12px !important;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.95);
+}
+
+/* dcc.Slider track / handle tweaks (global sliders) */
+.rc-slider {
+  margin-top: 4px;
+}
+
+.rc-slider-rail {
+  background-color: rgba(51, 65, 85, 0.9);
+}
+
+.rc-slider-track {
+  background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple));
+}
+
+.rc-slider-handle {
+  border: 2px solid var(--accent-cyan);
+  box-shadow: 0 0 0 4px rgba(34, 211, 238, 0.4);
+}
+
+.rc-slider-dot {
+  background-color: rgba(15, 23, 42, 0.9);
+  border-color: rgba(148, 163, 184, 0.5);
+}
+
+.rc-slider-dot-active {
+  border-color: var(--accent-cyan);
+}
+
+/* Loading component indicator */
+.dash-loading .dash-loading-spinner {
+  border-top-color: var(--accent-cyan);
+}
+
+/* Graph general tweaks */
+.js-plotly-plot .plotly .main-svg {
+  border-radius: 14px;
+}
+
+/* ---------------------------------------------------
+   MISC UTILITY
+--------------------------------------------------- */
+
+.text-muted {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.mt-1 { margin-top: 0.25rem; }
+.mt-2 { margin-top: 0.5rem; }
+.mt-3 { margin-top: 1rem; }
+
+.mb-1 { margin-bottom: 0.25rem; }
+.mb-2 { margin-bottom: 0.5rem; }
+.mb-3 { margin-bottom: 1rem; }

@@ -1,33 +1,14 @@
 import dash
-from dash import html, dcc, callback, Input, Output
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+from dash import html, dcc
 import pandas as pd
-
-from model import load_master
+import plotly.graph_objects as go
+from pathlib import Path
 
 dash.register_page(__name__, path="/eda", name="Exploratory Analysis")
 
-# --- Data preparation -----------------------------------------------------
-
-try:
-    df = load_master()
-
-    # Try to ensure delivery_month exists and is datetime-like
-    if "delivery_month" in df.columns:
-        df["delivery_month"] = pd.to_datetime(df["delivery_month"], errors="coerce")
-    elif "datetime" in df.columns:
-        df["delivery_month"] = pd.to_datetime(df["datetime"], errors="coerce").dt.to_period("M").dt.to_timestamp()
-    else:
-        df["delivery_month"] = pd.NaT
-
-    available_months = df["delivery_month"].dropna().sort_values().unique()
-    available_months_str = [pd.Timestamp(m).strftime("%Y-%m") for m in available_months]
-except Exception as e:
-    print(f"Error loading data for EDA: {e}")
-    df = pd.DataFrame()
-    available_months_str = []
-
+# -------------------------------------------------------------------------
+# Helpers
+# -------------------------------------------------------------------------
 
 def _empty_fig(message="No data available"):
     fig = go.Figure()
@@ -51,7 +32,224 @@ def _empty_fig(message="No data available"):
     return fig
 
 
-# --- Layout ---------------------------------------------------------------
+# -------------------------------------------------------------------------
+# Load EDA data from dashboard/data/EQR_output_EDA.csv
+# -------------------------------------------------------------------------
+
+try:
+    # Assuming this file is dashboard/pages/eda.py
+    # so parent (.. ) is the dashboard directory.
+    BASE_DIR = Path(__file__).resolve().parents[1]
+    DATA_PATH = BASE_DIR / "data" / "EQR_output_EDA.csv"
+
+    df = pd.read_csv(DATA_PATH)
+
+    # Ensure datetime types
+    df["trade_date_year_mo"] = pd.to_datetime(df["trade_date_year_mo"])
+    df["delivery_year_mo"] = pd.to_datetime(df["delivery_year_mo"])
+
+except Exception as e:
+    print(f"[EDA] Error loading EQR_output_EDA.csv: {e}")
+    df = pd.DataFrame()
+
+
+# -------------------------------------------------------------------------
+# Build animated figure: trade month on x, delivery month on slider
+# -------------------------------------------------------------------------
+
+def build_delivery_animation_figure():
+    """
+    Animated dual-axis chart:
+    - x-axis: trade_date_year_mo
+    - left y-axis: weighted_avg_price
+    - right y-axis: total_transacted_quantity
+    - frames/slider: each frame is one delivery_year_mo
+    """
+    if df.empty:
+        return _empty_fig("No EDA data available for animation.")
+
+    local_df = df.copy()
+
+    # Unique delivery months as 'YYYY-MM' labels
+    month_labels_all = sorted(
+        local_df["delivery_year_mo"].dt.strftime("%Y-%m").unique()
+    )
+
+    def process_month_data(month_str: str):
+        """
+        Filter to a single delivery month and:
+        - sort by trade_date_year_mo
+        - expand to full monthly range
+        - interpolate weighted_avg_price
+        - fill missing quantity with 0
+        Returns a DataFrame indexed by trade_date_year_mo, or None if empty.
+        """
+        mask = local_df["delivery_year_mo"].dt.strftime("%Y-%m") == month_str
+        g = local_df.loc[mask].copy()
+        if g.empty:
+            return None
+
+        # Sort by trade date
+        g = g.sort_values("trade_date_year_mo")
+
+        # Full range of trade months (avoid gaps in the animation)
+        full_range = pd.date_range(
+            start=g["trade_date_year_mo"].min(),
+            end=g["trade_date_year_mo"].max(),
+            freq="MS",  # Month Start
+        )
+
+        g = g.set_index("trade_date_year_mo").reindex(full_range)
+        g.index.name = "trade_date_year_mo"
+
+        # Interpolate price and fill quantity
+        g["weighted_avg_price"] = g["weighted_avg_price"].interpolate()
+        g["total_transacted_quantity"] = g["total_transacted_quantity"].fillna(0)
+
+        return g
+
+    frames = []
+    valid_month_labels = []
+
+    for month_str in month_labels_all:
+        g = process_month_data(month_str)
+        if g is None:
+            continue
+
+        valid_month_labels.append(month_str)
+
+        line_trace = go.Scatter(
+            x=g.index,
+            y=g["weighted_avg_price"],
+            mode="lines",
+            name="Weighted Avg Price",
+            yaxis="y1",
+        )
+
+        bar_trace = go.Bar(
+            x=g.index,
+            y=g["total_transacted_quantity"],
+            name="Total Transacted Quantity",
+            opacity=0.4,
+            yaxis="y2",
+        )
+
+        frames.append(
+            go.Frame(
+                name=month_str,
+                data=[line_trace, bar_trace],
+                layout=go.Layout(
+                    title_text=f"Delivery Month: {month_str}",
+                    xaxis=dict(
+                        autorange=True,
+                        tickformat="%Y-%m",
+                    ),
+                    yaxis=dict(autorange=True),
+                    yaxis2=dict(autorange=True),
+                ),
+            )
+        )
+
+    if not frames:
+        return _empty_fig("No frames were created – check EQR_output_EDA.csv.")
+
+    initial_frame = frames[0]
+
+    # Slider to move between delivery months
+    slider_steps = []
+    for month_str in valid_month_labels:
+        slider_steps.append(
+            {
+                "label": month_str,
+                "method": "animate",
+                "args": [
+                    [month_str],  # go to the frame with this name
+                    {
+                        "mode": "immediate",
+                        "frame": {"duration": 0, "redraw": True},
+                        "transition": {"duration": 0},
+                    },
+                ],
+            }
+        )
+
+    sliders = [
+        {
+            "active": 0,
+            "pad": {"t": 40},
+            "x": 0.1,
+            "y": -0.15,
+            "len": 0.8,
+            "steps": slider_steps,
+        }
+    ]
+
+    # Optional Play button
+    updatemenus = [
+        {
+            "type": "buttons",
+            "showactive": False,
+            "x": 0.1,
+            "y": 1.12,
+            "buttons": [
+                {
+                    "label": "Play",
+                    "method": "animate",
+                    "args": [
+                        None,
+                        {
+                            "frame": {"duration": 700, "redraw": True},
+                            "fromcurrent": True,
+                            "transition": {"duration": 0},
+                        },
+                    ],
+                }
+            ],
+        }
+    ]
+
+    fig = go.Figure(
+        data=initial_frame.data,
+        layout=go.Layout(
+            title=dict(
+                text="Price & quantity by trade month (animated by delivery month)",
+                x=0.5,
+            ),
+            xaxis=dict(
+                title="Trade Month (YYYY-MM)",
+                tickformat="%Y-%m",
+                autorange=True,
+            ),
+            yaxis=dict(
+                title="Weighted Avg Price ($/kW-mo)",
+                autorange=True,
+            ),
+            yaxis2=dict(
+                title="Total Transacted Quantity (MW)",
+                overlaying="y",
+                side="right",
+                autorange=True,
+            ),
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(15,23,42,0.6)",
+            font=dict(color="#e5e7eb"),
+            margin=dict(l=70, r=70, t=90, b=110),
+            sliders=sliders,
+            updatemenus=updatemenus,
+        ),
+        frames=frames,
+    )
+
+    return fig
+
+
+# Build once at import (static dataset)
+animated_fig = build_delivery_animation_figure()
+
+# -------------------------------------------------------------------------
+# Layout: ONLY the new EDA animated graph
+# -------------------------------------------------------------------------
 
 layout = html.Div(
     style={"maxWidth": "1200px", "margin": "16px auto 32px auto", "padding": "0 16px"},
@@ -59,211 +257,23 @@ layout = html.Div(
         html.Div(
             className="glass-card",
             children=[
-                html.Div(
-                    style={
-                        "display": "flex",
-                        "flexDirection": "column",
-                        "gap": "10px",
-                    },
-                    children=[
-                        html.Div(
-                            children=[
-                                html.H2("Exploratory analysis"),
-                                html.P(
-                                    "Slice the RA transactions by delivery month and inspect price–quantity patterns "
-                                    "in both 2D and 3D.",
-                                    className="text-muted",
-                                    style={"fontSize": "0.9rem"},
-                                ),
-                            ]
-                        ),
-                        html.Div(
-                            style={
-                                "display": "flex",
-                                "flexWrap": "wrap",
-                                "gap": "16px",
-                                "alignItems": "flex-end",
-                            },
-                            children=[
-                                html.Div(
-                                    style={"minWidth": "220px"},
-                                    children=[
-                                        html.Label(
-                                            "Delivery month",
-                                            style={
-                                                "fontSize": "0.8rem",
-                                                "textTransform": "uppercase",
-                                                "letterSpacing": "0.14em",
-                                            },
-                                        ),
-                                        dcc.Dropdown(
-                                            id="eda-month-dropdown",
-                                            options=[
-                                                {"label": m, "value": m}
-                                                for m in available_months_str
-                                            ],
-                                            value=available_months_str[0]
-                                            if available_months_str
-                                            else None,
-                                            clearable=False,
-                                            placeholder="Select month…",
-                                        ),
-                                    ],
-                                ),
-                            ],
-                        ),
-                    ],
-                )
-            ],
-        ),
-        html.Div(
-            style={
-                "display": "flex",
-                "flexWrap": "wrap",
-                "gap": "16px",
-                "marginTop": "16px",
-            },
-            children=[
-                html.Div(
-                    className="glass-card",
-                    style={"flex": "1 1 380px"},
-                    children=[
-                        html.H3("Quantity and price over time", style={"margin": "0 0 6px 0"}),
-                        # FIX: Constrain height to 500px
-                        dcc.Graph(id="eda-dual-axis", className="dash-graph", style={"height": "500px"}),
-                    ],
+                html.H2(
+                    "Exploratory analysis: delivery-month animation",
+                    style={"marginBottom": "6px"},
                 ),
-                html.Div(
-                    className="glass-card",
-                    style={"flex": "1 1 380px"},
-                    children=[
-                        html.H3("3D quantity–price cloud", style={"margin": "0 0 6px 0"}),
-                        # FIX: Constrain height to 500px
-                        dcc.Graph(id="eda-3d-scatter", className="dash-graph", style={"height": "500px"}),
-                    ],
+                html.P(
+                    "Each frame shows a single delivery month. Use the slider or Play button "
+                    "to see how trades build up across trade months.",
+                    className="text-muted",
+                    style={"fontSize": "0.9rem", "marginBottom": "12px"},
+                ),
+                dcc.Graph(
+                    id="eda-animated-delivery",
+                    className="dash-graph",
+                    style={"height": "500px"},
+                    figure=animated_fig,
                 ),
             ],
-        ),
+        )
     ],
 )
-
-
-# --- Callback -------------------------------------------------------------
-
-
-@callback(
-    Output("eda-dual-axis", "figure"),
-    Output("eda-3d-scatter", "figure"),
-    Input("eda-month-dropdown", "value"),
-)
-def update_eda_graphs(selected_month_str):
-    if not selected_month_str or df.empty:
-        empty = _empty_fig("Select a month to view detail.")
-        return empty, empty
-
-    # Filter data for the selected month
-    mask = df["delivery_month"].dt.strftime("%Y-%m") == selected_month_str
-    dff = df[mask].sort_values("datetime").copy()
-
-    if dff.empty:
-        empty = _empty_fig("No data for this delivery month.")
-        return empty, empty
-
-    price_col = (
-        "standardized_price"
-        if "standardized_price" in dff.columns
-        else "charge"
-        if "charge" in dff.columns
-        else None
-    )
-    if price_col is None:
-        empty = _empty_fig("No price column found.")
-        return empty, empty
-
-    # --- 1. Dual-axis chart (bars = quantity, line = price) -------------
-    fig2d = make_subplots(specs=[[{"secondary_y": True}]])
-
-    # Quantity bars
-    if "qty" in dff.columns:
-        fig2d.add_trace(
-            go.Bar(
-                x=dff["datetime"],
-                y=dff["qty"],
-                name="Quantity (MW)",
-                marker_color="rgba(59,130,246,0.4)",
-                marker_line_width=0,
-                hovertemplate="%{x|%Y-%m-%d %H:%M}<br>Qty: %{y:.0f} MW<extra></extra>",
-            ),
-            secondary_y=False,
-        )
-
-    # Price line
-    fig2d.add_trace(
-        go.Scatter(
-            x=dff["datetime"],
-            y=dff[price_col],
-            mode="lines",
-            name="Price",
-            line=dict(color="#f97316", width=2),
-            hovertemplate="%{x|%Y-%m-%d %H:%M}<br>Price: $%{y:.2f}<extra></extra>",
-        ),
-        secondary_y=True,
-    )
-
-    fig2d.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(15,23,42,0.6)",
-        font=dict(color="#e5e7eb"),
-        margin=dict(l=40, r=20, t=20, b=40),
-        legend=dict(orientation="h", y=1.05, x=0),
-        hovermode="x unified",
-        # Allow plotly to autosize within the container we set
-        autosize=True,
-    )
-    fig2d.update_xaxes(title_text="Datetime")
-    fig2d.update_yaxes(title_text="Quantity (MW)", secondary_y=False)
-    fig2d.update_yaxes(title_text="Price ($)", secondary_y=True)
-
-    # --- 2. 3D scatter of quantity vs price vs time ----------------------
-    if "qty" in dff.columns:
-        y_vals = dff["qty"]
-    else:
-        y_vals = dff.index
-
-    fig3d = go.Figure(
-        data=[
-            go.Scatter3d(
-                x=dff["datetime"].dt.strftime("%Y-%m-%d %H:%M"),
-                y=y_vals,
-                z=dff[price_col],
-                mode="markers",
-                marker=dict(
-                    size=5,
-                    color=dff[price_col],
-                    colorscale="Viridis",
-                    opacity=0.8,
-                    showscale=True,
-                    colorbar=dict(title="Price", thickness=15, x=0.9),
-                ),
-                hovertemplate="<b>Time:</b> %{x}<br><b>Qty:</b> %{y} MW<br><b>Price:</b> $%{z:.2f}<extra></extra>",
-            )
-        ]
-    )
-
-    fig3d.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="rgba(0,0,0,0)",
-        scene=dict(
-            xaxis_title="Time",
-            yaxis_title="Quantity",
-            zaxis_title="Price",
-            xaxis=dict(backgroundcolor="rgba(0,0,0,0)", gridcolor="#374151", color="#e5e7eb"),
-            yaxis=dict(backgroundcolor="rgba(0,0,0,0)", gridcolor="#374151", color="#e5e7eb"),
-            zaxis=dict(backgroundcolor="rgba(0,0,0,0)", gridcolor="#374151", color="#e5e7eb"),
-        ),
-        margin=dict(l=0, r=0, b=0, t=10),
-        autosize=True,
-    )
-
-    return fig2d, fig3d
