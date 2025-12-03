@@ -10,7 +10,6 @@ from sklearn.multioutput import MultiOutputRegressor
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-import joblib
 
 # -------------------------------------------------------------------------
 # Paths
@@ -246,7 +245,7 @@ def train_forecast_models() -> Dict[str, object]:
     # Random Forest
     # ------------------------------------------------------------------
     rf = RandomForestRegressor(
-        n_estimators=500,
+        n_estimators=200,
         max_depth=None,
         random_state=42,
         n_jobs=-1,
@@ -398,7 +397,7 @@ def train_forecast_models() -> Dict[str, object]:
 
 
 # -------------------------------------------------------------------------
-# Dash-facing helper: load frozen artifacts if available
+# Dash-facing helper: prefer frozen CSVs if present
 # -------------------------------------------------------------------------
 
 @lru_cache(maxsize=1)
@@ -407,48 +406,74 @@ def get_forecast_dashboard_data() -> Dict[str, object]:
     Load forecast results (and models) for Dash.
 
     Preferred path (for Render):
-      - Load precomputed CSVs and a small models .joblib from DATA_DIR.
+      - Load precomputed CSVs from DATA_DIR and refit lightweight models
+        for scenario interactivity.
 
-    Fallback (for local dev if CSVs/joblib missing):
+    Fallback (for local dev if CSVs missing):
       - Train models on the fly via train_forecast_models().
     """
     data_path = os.path.join(DATA_DIR, "forecast_data.csv")
     comp_path = os.path.join(DATA_DIR, "forecast_comparison.csv")
     bt_path = os.path.join(DATA_DIR, "forecast_backtest.csv")
     fut_path = os.path.join(DATA_DIR, "forecast_future.csv")
-    models_path = os.path.join(DATA_DIR, "forecast_models_small.joblib")
 
-    # -----------------------------
-    # 1) Preferred: load frozen artifacts
-    # -----------------------------
-    if all(os.path.exists(p) for p in [data_path, comp_path, bt_path, fut_path, models_path]):
-        print("[model.py] Loading frozen forecast CSVs and small model bundle...")
+    if all(os.path.exists(p) for p in [data_path, comp_path, bt_path, fut_path]):
+        print("[model.py] Loading frozen forecast CSVs and refitting lightweight models...")
 
         data = pd.read_csv(data_path)
         comparison_df = pd.read_csv(comp_path)
         backtest_df = pd.read_csv(bt_path)
         future_df = pd.read_csv(fut_path)
 
-        # Ensure date columns are datetime where needed
+        # Ensure datetime for plots
         if "period" in backtest_df.columns:
             backtest_df["period"] = pd.to_datetime(backtest_df["period"])
         if "period" in future_df.columns:
             future_df["period"] = pd.to_datetime(future_df["period"])
 
-        models_small = joblib.load(models_path)
-        scaler = models_small["scaler"]
-        svr_model = models_small["svr_model"]
-        rf_model = models_small["rf_model"]
-        feature_cols = models_small["feature_cols"]
-        target_cols = models_small["target_cols"]
+        # Reconstruct feature/target columns (must match build_monthly_dataset)
+        feature_cols = (
+            [f"lag_{i}" for i in range(1, 5)]
+            + [
+                "month",
+                "year",
+                "total_transacted_quantity",
+                "total_std_qty",
+                "total_tx_qty",
+                "avg_std_price",
+                "num_trades",
+            ]
+        )
+        target_cols = ["target_1", "target_2"]
 
-        # Reconstruct train/test split (same logic as training)
+        # Fit lightweight models on full frozen dataset
+        X = data[feature_cols]
+        y = data[target_cols]
+
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+
+        svr_model = MultiOutputRegressor(
+            SVR(kernel="rbf", C=10.0, epsilon=0.1, gamma="scale")
+        )
+        svr_model.fit(X_scaled, y)
+
+        rf_model = MultiOutputRegressor(
+            RandomForestRegressor(
+                n_estimators=200,
+                max_depth=None,
+                random_state=42,
+                n_jobs=-1,
+            )
+        )
+        rf_model.fit(X, y)
+
+        # For train/test split / y_pred_test, we can reconstruct similarly to training
         all_periods = sorted(data["period"].unique())
         if len(all_periods) >= 24:
             test_periods = all_periods[-12:]
             train_periods = all_periods[:-12]
         else:
-            # Fallback if data is shorter for some reason
             split_idx = max(1, int(0.8 * len(all_periods)))
             train_periods = all_periods[:split_idx]
             test_periods = all_periods[split_idx:]
@@ -461,7 +486,6 @@ def get_forecast_dashboard_data() -> Dict[str, object]:
         X_test = data.loc[test_mask, feature_cols]
         y_test = data.loc[test_mask, target_cols]
 
-        # Rebuild baseline SVR cheaply for y_pred_test (does NOT affect frozen results)
         X_train_scaled = scaler.transform(X_train)
         X_test_scaled = scaler.transform(X_test)
 
@@ -469,7 +493,6 @@ def get_forecast_dashboard_data() -> Dict[str, object]:
         base_svr.fit(X_train_scaled, y_train)
         y_pred_base = base_svr.predict(X_test_scaled)
 
-        # Predictions from tuned SVR and RF using frozen models
         y_pred_svr = svr_model.predict(X_test_scaled)
         y_pred_rf = rf_model.predict(X_test)
 
@@ -502,8 +525,6 @@ def get_forecast_dashboard_data() -> Dict[str, object]:
         }
         return result
 
-    # -----------------------------
-    # 2) Fallback: train on the fly (local dev)
-    # -----------------------------
-    print("[model.py] Frozen artifacts not found. Training models now...")
+    # Fallback: train everything (local dev)
+    print("[model.py] Frozen CSVs not found. Training models now...")
     return train_forecast_models()
