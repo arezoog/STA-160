@@ -30,6 +30,10 @@ OUTPUT_MASTER_PATH = os.path.join(DATA_DIR, "EQR_master_output_new.csv")
 def load_master() -> pd.DataFrame:
     """
     Load the transaction-level EQR master file and build helper columns.
+
+    On Render (or any constrained environment), you can cap the number of
+    rows loaded by setting the MAX_EQR_ROWS environment variable. Locally,
+    if MAX_EQR_ROWS is not set, the full file is loaded.
     """
     if not os.path.exists(CLEAN_MASTER_PATH):
         raise FileNotFoundError(
@@ -37,7 +41,19 @@ def load_master() -> pd.DataFrame:
             "Place EQR_master_clean_new.csv in the dashboard/data folder."
         )
 
-    df = pd.read_csv(CLEAN_MASTER_PATH, low_memory=False)
+    # --- Allow row cap via env var to avoid OOM on Render ---
+    max_rows_env = os.environ.get("MAX_EQR_ROWS")
+    read_kwargs = {"low_memory": False}
+
+    if max_rows_env:
+        try:
+            read_kwargs["nrows"] = int(max_rows_env)
+        except ValueError:
+            # If the env var is not an int, just ignore and load full file
+            pass
+
+    df = pd.read_csv(CLEAN_MASTER_PATH, **read_kwargs)
+    # --- End new part ---
 
     # Choose a date column
     dt = None
@@ -123,9 +139,7 @@ def build_monthly_dataset() -> Tuple[pd.DataFrame, List[str], List[str]]:
     else:
         monthly["total_transacted_quantity"] = 0.0
 
-    # ------------------------------------------------------------------
     # Transaction-level features by trade month (optimized aggregation)
-    # ------------------------------------------------------------------
     master = load_master()
     if "trade_date_year_mo" not in master.columns:
         raise ValueError(
@@ -218,32 +232,24 @@ def train_forecast_models() -> Dict[str, object]:
     X_test = data.loc[test_mask, feature_cols]
     y_test = data.loc[test_mask, target_cols]
 
-    # ------------------------------------------------------------------
     # Scaling
-    # ------------------------------------------------------------------
     scaler = StandardScaler()
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
-    # ------------------------------------------------------------------
     # Baseline SVR
-    # ------------------------------------------------------------------
     base_svr = MultiOutputRegressor(SVR(kernel="rbf"))
     base_svr.fit(X_train_scaled, y_train)
     y_pred_base = base_svr.predict(X_test_scaled)
 
-    # ------------------------------------------------------------------
     # "Tuned" SVR without GridSearchCV
-    # ------------------------------------------------------------------
     best_svr = MultiOutputRegressor(
         SVR(kernel="rbf", C=10.0, epsilon=0.1, gamma="scale")
     )
     best_svr.fit(X_train_scaled, y_train)
     y_pred_svr = best_svr.predict(X_test_scaled)
 
-    # ------------------------------------------------------------------
     # Random Forest
-    # ------------------------------------------------------------------
     rf = RandomForestRegressor(
         n_estimators=200,
         max_depth=None,
@@ -254,9 +260,7 @@ def train_forecast_models() -> Dict[str, object]:
     multi_rf.fit(X_train, y_train)
     y_pred_rf = multi_rf.predict(X_test)
 
-    # ------------------------------------------------------------------
     # Metrics summary
-    # ------------------------------------------------------------------
     def summarize_model(name: str, y_pred: np.ndarray) -> Dict[str, float]:
         mae = mean_absolute_error(y_test, y_pred, multioutput="raw_values")
         rmse = np.sqrt(mean_squared_error(y_test, y_pred, multioutput="raw_values"))
@@ -278,9 +282,7 @@ def train_forecast_models() -> Dict[str, object]:
     ]
     comparison_df = pd.DataFrame(rows)
 
-    # ------------------------------------------------------------------
     # Rolling backtest (Ridge) for target_1
-    # ------------------------------------------------------------------
     X_all = data[feature_cols].values
     y_all = data["target_1"].values
     period_all = data["period"].values
@@ -318,9 +320,7 @@ def train_forecast_models() -> Dict[str, object]:
     )
     avg_mae_bt = float(np.mean(mae_bt)) if mae_bt else np.nan
 
-    # ------------------------------------------------------------------
     # 12-month ahead forecast
-    # ------------------------------------------------------------------
     horizon = 12
     last_period = pd.to_datetime(data["period"].iloc[-1])
     last_row = data.iloc[-1]
@@ -517,7 +517,7 @@ def get_forecast_dashboard_data() -> Dict[str, object]:
             },
             "comparison_df": comparison_df,
             "backtest_df": backtest_df,
-            "avg_backtest_mae": avg_mae_bt,
+            "avg_backtest_mae": avg_backtest_mae,
             "future_df": future_df,
             "scaler": scaler,
             "svr_model": svr_model,
