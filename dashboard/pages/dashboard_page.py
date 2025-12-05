@@ -6,8 +6,6 @@ import plotly.graph_objects as go
 
 from model import get_forecast_dashboard_data
 
-dash.register_page(__name__, path="/dashboard", name="Forecast Dashboard")
-
 # -------------------------------------------------------------------------
 # Load all precomputed forecasting outputs once
 # -------------------------------------------------------------------------
@@ -37,6 +35,14 @@ if "period_dt" not in future_df.columns:
     future_df["period_dt"] = pd.to_datetime(future_df["period"])
 
 HORIZON_MAX = max(1, len(future_df))  # used for slider
+
+# Default horizon + slider marks
+DEFAULT_HORIZON = min(12, HORIZON_MAX)
+_base_marks = [1, 3, 6, 12]
+HORIZON_MARKS = {h: str(h) for h in _base_marks if 1 <= h <= HORIZON_MAX}
+if HORIZON_MAX not in HORIZON_MARKS:
+    HORIZON_MARKS[HORIZON_MAX] = str(HORIZON_MAX)
+
 
 # -------------------------------------------------------------------------
 # Helpers
@@ -69,20 +75,24 @@ def _empty_fig(message="No data available"):
 # -------------------------------------------------------------------------
 
 def make_full_history_fig() -> go.Figure:
-    if data.empty:
+    # Filter to 2019 onwards so the history view matches the rest of the site
+    mask = data["period_dt"].dt.year >= 2019
+    plot_data = data.loc[mask]
+
+    if plot_data.empty:
         return _empty_fig("No historical data available.")
 
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
-            x=data["period_dt"],
-            y=data["weighted_avg_price"],
+            x=plot_data["period_dt"],
+            y=plot_data["weighted_avg_price"],
             mode="lines",
             name="Weighted avg price",
         )
     )
     fig.update_layout(
-        title="Historical RA Price Index (Monthly)",
+        title="Historical RA Price Index (2019 - Present)",
         xaxis_title="Period",
         yaxis_title="Weighted avg price ($/kW-month)",
         template="plotly_dark",
@@ -94,6 +104,7 @@ def make_full_history_fig() -> go.Figure:
 def make_test_1step_fig() -> go.Figure:
     """
     Actual vs predicted 1-step ahead prices on the 12-month test set.
+    (No longer used in the layout; kept here in case you want it later.)
     """
     if test_df.empty or y_test_arr.size == 0:
         return _empty_fig("No test data available for 1-step forecast.")
@@ -233,82 +244,46 @@ def make_metrics_table() -> html.Table:
 # -------------------------------------------------------------------------
 
 layout = html.Div(
-    style={"maxWidth": "1200px", "margin": "24px auto 32px auto", "padding": "0 16px"},
+    className="page-container",
     children=[
-        # Top summary + controls
+        # Top summary + explanation
         html.Div(
             className="glass-card",
             style={"padding": "24px", "marginBottom": "24px"},
             children=[
                 html.H2("Resource Adequacy Price Forecast Dashboard"),
                 html.P(
-                    "Use the controls to explore forecasts: choose model, "
-                    "adjust forecast horizon, and compare historical vs future prices.",
-                    style={"opacity": 0.85},
+                    "This dashboard shows how the RA capacity price index has evolved over time and what "
+                    "our models expect to happen next. Use the controls below to switch between forecasting "
+                    "models, change how many months into the future to display, and compare model accuracy "
+                    "on a held-out test set.",
+                    style={"opacity": 0.9, "fontSize": "0.95rem"},
                 ),
-
-                # CONTROL PANEL
-                html.Div(
-                    style={
-                        "display": "flex",
-                        "flexWrap": "wrap",
-                        "gap": "16px",
-                        "marginTop": "12px",
-                        "marginBottom": "8px",
-                    },
+                html.Ul(
+                    style={"marginLeft": "20px", "lineHeight": "1.7"},
                     children=[
-                        # Model selector
-                        html.Div(
-                            style={"minWidth": "220px"},
-                            children=[
-                                html.Label(
-                                    "Forecast model",
-                                    style={
-                                        "fontSize": "0.8rem",
-                                        "textTransform": "uppercase",
-                                        "letterSpacing": "0.04em",
-                                    },
-                                ),
-                                dcc.Dropdown(
-                                    id="forecast-model",
-                                    options=[
-                                        {"label": "SVR (tuned)", "value": "SVR_tuned"},
-                                        {"label": "Random Forest", "value": "RandomForest"},
-                                        {"label": "Compare both", "value": "both"},
-                                    ],
-                                    value="both",
-                                    clearable=False,
-                                ),
-                            ],
+                        html.Li(
+                            [
+                                html.Strong("Forecast model: "),
+                                "choose between a tuned Support Vector Regression (SVR), a Random Forest, "
+                                "or show both on the same chart.",
+                            ]
                         ),
-                        # Forecast horizon slider
-                        html.Div(
-                            style={"minWidth": "260px"},
-                            children=[
-                                html.Label(
-                                    "Forecast horizon (months ahead)",
-                                    style={
-                                        "fontSize": "0.8rem",
-                                        "textTransform": "uppercase",
-                                        "letterSpacing": "0.04em",
-                                    },
-                                ),
-                                dcc.Slider(
-                                    id="forecast-horizon",
-                                    min=1,
-                                    max=HORIZON_MAX,
-                                    step=1,
-                                    value=min(12, HORIZON_MAX),
-                                    marks={
-                                        i: str(i)
-                                        for i in range(1, HORIZON_MAX + 1)
-                                    },
-                                ),
-                            ],
+                        html.Li(
+                            [
+                                html.Strong("Horizon slider: "),
+                                "sets how many months ahead to reveal in the forecast line (e.g., 3, 6, or 12 months).",
+                            ]
+                        ),
+                        html.Li(
+                            [
+                                html.Strong("Model comparison table: "),
+                                "summarizes how each model performed on a 12-month holdout using R², MAE, and RMSE "
+                                "for 1-step (t+1) and 2-step (t+2) ahead forecasts.",
+                            ]
                         ),
                     ],
                 ),
-
                 html.H4("Model Comparison (12-month holdout)"),
                 make_metrics_table(),
             ],
@@ -323,11 +298,31 @@ layout = html.Div(
                 "marginBottom": "24px",
             },
             children=[
+                # LEFT: history
                 html.Div(
                     className="glass-card",
                     style={"padding": "16px"},
                     children=[
                         html.H4("Historical Price Index"),
+                        html.P(
+                            "This chart shows the historical RA capacity price index from 2019 to the most "
+                            "recent month. Each point is the weighted-average price for that month’s "
+                            "capacity trades.",
+                            className="text-muted",
+                            style={"fontSize": "0.9rem"},
+                        ),
+                        html.Ul(
+                            style={"marginLeft": "20px", "lineHeight": "1.7"},
+                            children=[
+                                html.Li(
+                                    "Hover over the line to see the exact price for a given month."
+                                ),
+                                html.Li(
+                                    "Use the zoom tools or scroll wheel to focus on particular periods "
+                                    "such as spikes around 2023–2024."
+                                ),
+                            ],
+                        ),
                         dcc.Graph(
                             id="full-history-graph",
                             figure=make_full_history_fig(),
@@ -335,11 +330,104 @@ layout = html.Div(
                         ),
                     ],
                 ),
+
+                # RIGHT: interactive forecast
                 html.Div(
                     className="glass-card",
                     style={"padding": "16px"},
                     children=[
                         html.H4("Interactive Forecast"),
+                        html.P(
+                            "This chart overlays the recent historical series with model forecasts for future "
+                            "months. The vertical dashed line marks the point where the forecast begins.",
+                            className="text-muted",
+                            style={"fontSize": "0.9rem"},
+                        ),
+                        html.Ol(
+                            style={"marginLeft": "20px", "lineHeight": "1.7"},
+                            children=[
+                                html.Li(
+                                    "Choose a model (SVR, Random Forest, or both) in the dropdown below."
+                                ),
+                                html.Li(
+                                    "Use the horizon slider to decide how many months ahead to reveal. "
+                                    "The future line will extend that many steps beyond the vertical split."
+                                ),
+                                html.Li(
+                                    "Compare how aggressively each model projects prices to rise or fall "
+                                    "relative to the recent trend.",
+                                ),
+                            ],
+                        ),
+                        # Controls: model dropdown + horizon slider
+                        html.Div(
+                            style={
+                                "display": "flex",
+                                "flexWrap": "wrap",
+                                "gap": "1rem",
+                                "alignItems": "center",
+                                "marginTop": "10px",
+                                "marginBottom": "10px",
+                            },
+                            children=[
+                                html.Div(
+                                    style={
+                                        "minWidth": "220px",
+                                        "flex": "0 0 auto",
+                                    },
+                                    children=[
+                                        html.Span(
+                                            "Forecast model:",
+                                            className="text-muted",
+                                            style={"fontSize": "0.85rem"},
+                                        ),
+                                        dcc.Dropdown(
+                                            id="forecast-model",
+                                            options=[
+                                                {
+                                                    "label": "SVR (tuned)",
+                                                    "value": "SVR_tuned",
+                                                },
+                                                {
+                                                    "label": "Random Forest",
+                                                    "value": "RandomForest",
+                                                },
+                                                {
+                                                    "label": "Both models",
+                                                    "value": "both",
+                                                },
+                                            ],
+                                            value="both",
+                                            clearable=False,
+                                            className="dropdown-dark",
+                                            style={"width": "220px"},
+                                        ),
+                                    ],
+                                ),
+                                html.Div(
+                                    style={"flex": "1 1 220px"},
+                                    children=[
+                                        html.Span(
+                                            "Forecast horizon (months ahead):",
+                                            className="text-muted",
+                                            style={"fontSize": "0.85rem"},
+                                        ),
+                                        dcc.Slider(
+                                            id="forecast-horizon",
+                                            min=1,
+                                            max=HORIZON_MAX,
+                                            step=1,
+                                            value=DEFAULT_HORIZON,
+                                            marks=HORIZON_MARKS,
+                                            tooltip={
+                                                "placement": "bottom",
+                                                "always_visible": False,
+                                            },
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
                         dcc.Graph(
                             id="interactive-forecast-graph",
                             style={"height": "360px"},
@@ -350,11 +438,11 @@ layout = html.Div(
             ],
         ),
 
-        # ROW 2: test set + backtest
+        # ROW 2: backtest only
         html.Div(
             style={
                 "display": "grid",
-                "gridTemplateColumns": "minmax(0, 1fr) minmax(0, 1fr)",
+                "gridTemplateColumns": "minmax(0, 1fr)",
                 "gap": "16px",
             },
             children=[
@@ -362,19 +450,30 @@ layout = html.Div(
                     className="glass-card",
                     style={"padding": "16px"},
                     children=[
-                        html.H4("Holdout Test – 1-Step Ahead (Last 12 Months)"),
-                        dcc.Graph(
-                            id="test-1step-graph",
-                            figure=make_test_1step_fig(),
-                            style={"height": "360px"},
-                        ),
-                    ],
-                ),
-                html.Div(
-                    className="glass-card",
-                    style={"padding": "16px"},
-                    children=[
                         html.H4("Rolling Backtest – 1-Step MAE"),
+                        html.P(
+                            "This chart tracks the 1-step-ahead absolute error (MAE) of a Ridge regression "
+                            "baseline over time. Each point corresponds to one backtest step, where the model "
+                            "was retrained on all available history and then asked to predict the next month.",
+                            className="text-muted",
+                            style={"fontSize": "0.9rem"},
+                        ),
+                        html.Ul(
+                            style={"marginLeft": "20px", "lineHeight": "1.7"},
+                            children=[
+                                html.Li(
+                                    "Lower MAE values mean the model’s 1-month-ahead predictions were closer to "
+                                    "actual prices."
+                                ),
+                                html.Li(
+                                    "The dashed horizontal line shows the average MAE over all backtest steps."
+                                ),
+                                html.Li(
+                                    "Spikes in MAE can correspond to structural breaks in the market, such as "
+                                    "policy changes or unusual stress periods.",
+                                ),
+                            ],
+                        ),
                         dcc.Graph(
                             id="backtest-graph",
                             figure=make_backtest_fig(),
@@ -386,6 +485,7 @@ layout = html.Div(
         ),
     ],
 )
+
 
 # -------------------------------------------------------------------------
 # Callback: interactive forecast graph
@@ -408,7 +508,7 @@ def update_forecast_graph(model_choice, horizon):
     # Safety: clip horizon
     if horizon is None or horizon < 1:
         horizon = 1
-    horizon = min(horizon, len(future_df))
+    horizon = int(min(horizon, len(future_df)))
 
     # Last 36 months of history for context
     hist_tail = data.tail(36).copy()

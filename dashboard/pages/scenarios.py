@@ -1,5 +1,3 @@
-# dashboard/pages/scenario.py
-
 import dash
 from dash import html, dcc, Input, Output, callback
 import pandas as pd
@@ -7,15 +5,6 @@ import plotly.graph_objects as go
 
 from model import get_forecast_dashboard_data
 
-dash.register_page(
-    __name__,
-    path="/scenario",
-    name="Scenario Lab",
-)
-
-# -----------------------------------------------------------
-# Load pre-trained models + data once at import
-# -----------------------------------------------------------
 result = get_forecast_dashboard_data()
 data = result["data"]
 feature_cols = result["feature_cols"]
@@ -23,10 +12,13 @@ scaler = result["scaler"]
 svr_model = result["svr_model"]      # MultiOutputRegressor(SVR)
 rf_model = result["rf_model"]        # MultiOutputRegressor(RandomForest)
 
+period_dt = pd.to_datetime(data["period"])
+data_ui = data[period_dt.dt.year >= 2019]
+
 # Dropdown options for base period
 period_options = [
     {"label": pd.to_datetime(p).strftime("%b %Y"), "value": str(p)}
-    for p in sorted(data["period"].unique())
+    for p in sorted(data_ui["period"].unique())
 ]
 
 default_period = period_options[-1]["value"] if period_options else None
@@ -69,9 +61,40 @@ layout = html.Div(
             children=[
                 html.H2("Scenario Lab"),
                 html.P(
-                    "Select a historical month as your starting point, tweak key drivers "
-                    "(quantity, trades, and price), and see how the models predict next "
-                    "months’ prices."
+                    "This page lets you stress-test the RA price models under different market conditions. "
+                    "Start from a real historical month, then adjust key drivers like total quantity, number "
+                    "of trades, and average price to see how two models (SVR and Random Forest) respond.",
+                    className="text-muted",
+                    style={"fontSize": "0.95rem"},
+                ),
+                html.Ul(
+                    style={"marginLeft": "20px", "lineHeight": "1.7"},
+                    children=[
+                        html.Li(
+                            [
+                                html.Strong("Base month: "),
+                                "the historical starting point for your scenario (e.g., Aug 2024).",
+                            ]
+                        ),
+                        html.Li(
+                            [
+                                html.Strong("Total transacted quantity: "),
+                                "represents how much RA capacity is traded in that month.",
+                            ]
+                        ),
+                        html.Li(
+                            [
+                                html.Strong("Number of trades: "),
+                                "how many individual deals occur in that month.",
+                            ]
+                        ),
+                        html.Li(
+                            [
+                                html.Strong("Average standardized price multiplier: "),
+                                "scales the typical price level up or down (e.g., 1.2x = 20% higher prices).",
+                            ]
+                        ),
+                    ],
                 ),
             ],
         ),
@@ -85,7 +108,22 @@ layout = html.Div(
                     className="scenario-input-card",
                     children=[
                         html.H3("Scenario Inputs"),
+                        html.P(
+                            "Choose a base month, then adjust the sliders to define your scenario. "
+                            "The ranges come from the actual historical distribution, so values near "
+                            "the edges represent relatively extreme conditions.",
+                            className="text-muted",
+                            style={"fontSize": "0.9rem"},
+                        ),
 
+                        html.H4(
+                            "1. Pick a base month",
+                            style={
+                                "marginTop": "10px",
+                                "marginBottom": "4px",
+                                "fontSize": "0.9rem",
+                            },
+                        ),
                         html.Label("Base Month"),
                         dcc.Dropdown(
                             id="scenario-period",
@@ -97,6 +135,14 @@ layout = html.Div(
 
                         html.Div(style={"height": "12px"}),
 
+                        html.H4(
+                            "2. Adjust market conditions",
+                            style={
+                                "marginTop": "10px",
+                                "marginBottom": "4px",
+                                "fontSize": "0.9rem",
+                            },
+                        ),
                         html.Label("Total Transacted Quantity (MWh, override)"),
                         dcc.Slider(
                             id="scenario-qty",
@@ -143,6 +189,12 @@ layout = html.Div(
                             marks={0.8: "0.8x", 1.0: "1.0x", 1.2: "1.2x"},
                             tooltip={"placement": "bottom", "always_visible": False},
                         ),
+                        html.P(
+                            "Values below 1.0x simulate a softer price environment, "
+                            "while values above 1.0x simulate higher typical prices for the base month.",
+                            className="text-muted",
+                            style={"fontSize": "0.8rem", "marginTop": "6px"},
+                        ),
                     ],
                 ),
 
@@ -150,6 +202,15 @@ layout = html.Div(
                 html.Div(
                     className="scenario-output-card",
                     children=[
+                        html.H3("Scenario Results"),
+                        html.P(
+                            "Once you set your scenario on the left, this panel shows how the SVR and "
+                            "Random Forest models forecast prices for the next two months (t+1 and t+2). "
+                            "You can compare these scenario forecasts to the original baseline prices "
+                            "for that same base month.",
+                            className="text-muted",
+                            style={"fontSize": "0.9rem"},
+                        ),
                         dcc.Loading(
                             type="default",
                             children=[
@@ -171,7 +232,7 @@ layout = html.Div(
                                     ],
                                 ),
                             ],
-                        )
+                        ),
                     ],
                 ),
             ],
@@ -179,10 +240,6 @@ layout = html.Div(
     ],
 )
 
-
-# -----------------------------------------------------------
-# Callbacks
-# -----------------------------------------------------------
 
 @callback(
     Output("scenario-qty-label", "children"),
@@ -255,14 +312,15 @@ def run_scenario(period_value, qty_value, trades_value, price_mult):
     # Summary text + forecast cards
     summary = html.Div(
         children=[
-            html.H3(f"Scenario results for {pd.to_datetime(period_value).strftime('%b %Y')}"),
-
+            html.H3(
+                f"Scenario results for {pd.to_datetime(period_value).strftime('%b %Y')}"
+            ),
             html.P(
                 f"Using total quantity = {qty_value:,.0f} MWh, "
                 f"num trades = {trades_value:,.0f}, "
-                f"price multiplier = {price_mult:.2f}x."
+                f"price multiplier = {price_mult:.2f}x.",
+                className="text-muted",
             ),
-
             html.Div(
                 className="scenario-cards",
                 children=[
@@ -283,6 +341,13 @@ def run_scenario(period_value, qty_value, trades_value, price_mult):
                         ],
                     ),
                 ],
+            ),
+            html.P(
+                "Bars in the comparison charts below show how scenario forecasts compare to the baseline "
+                "t+1 and t+2 prices. This helps you see whether your hypothetical conditions push the "
+                "models toward higher or lower price expectations.",
+                className="text-muted",
+                style={"marginTop": "10px", "fontSize": "0.85rem"},
             ),
         ]
     )

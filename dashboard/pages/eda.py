@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 from pathlib import Path
 from functools import lru_cache
 
-dash.register_page(__name__, path="/eda", name="Exploratory Analysis")
+#dash.register_page(__name__, path="/eda", name="Exploratory Analysis")
 
 # -------------------------------------------------------------------------
 # Helpers
@@ -257,11 +257,7 @@ def build_delivery_animation_figure():
 
 def layout():
     return html.Div(
-        style={
-            "maxWidth": "1200px",
-            "margin": "16px auto 32px auto",
-            "padding": "0 16px",
-        },
+        className = "page-container",
         children=[
             html.Div(
                 className="glass-card",
